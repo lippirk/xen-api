@@ -20,6 +20,7 @@ open Threadext
 open Client
 
 module D = Debug.Make(struct let name="xapi" end)
+module E = Xapi_stdext_monadic.Either
 open D
 
 (** Execute scripts in the "master-scripts" dir when changing role from master
@@ -107,12 +108,28 @@ let attempt_two_phase_commit_of_new_master ~__context (manual: bool) (peer_addre
   let hosts_which_failed = ref [] in
   let tell_host_to_commit address =
     debug "Signalling commit to host address: %s" address;
-    try
-      Helpers.call_emergency_mode_functions address
-        (fun rpc session_id -> Client.Host.commit_new_master rpc session_id my_address)
-    with e ->
-      debug "Caught exception %s while telling host to commit new master" (ExnHelper.string_of_exn e);
-      hosts_which_failed := address :: !hosts_which_failed in
+    let timeout_s = 300. in
+    let counter = Mtime_clock.counter () in
+    let commit () =
+      try
+        E.Right (Helpers.call_emergency_mode_functions address
+          (fun rpc session_id -> Client.Host.commit_new_master rpc session_id my_address))
+      with e -> E.Left e
+    in
+    let rec retry = function
+    | E.Right x -> x
+    | E.Left e ->
+      let time_spent_s = Mtime.Span.to_s @@ Mtime_clock.count counter in
+      D.debug "Caught exception %s while telling host to commit new master" (ExnHelper.string_of_exn e);
+      if time_spent_s >= timeout_s then (
+        D.error "attempt_two_phase_commit_of_new_master: giving up trying to commit_new_master on %s" address;
+        hosts_which_failed := address :: !hosts_which_failed)
+      else
+        D.warn "attempt_two_phase_commit_of_new_master: failed to commit_new_master on %s; retrying..." address;
+        retry (commit ())
+    in
+    retry (commit ())
+  in
 
   debug "Phase 2.1: telling everyone but me to commit";
   List.iter tell_host_to_commit peer_addresses;
