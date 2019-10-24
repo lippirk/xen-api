@@ -58,9 +58,13 @@ let parameter_count_mismatch_failure func expected received =
 
 (** WARNING: the context is destroyed when execution is finished if the task is not forwarded, in database and not called asynchronous. *)
 (*  FIXME: This function should not be used for external call : we should add a proper .mli file to hide it. *)
-let exec_with_context ~__context ?marshaller ?f_forward ?(called_async=false) ?(has_task=false) f =
+let exec_with_context ~__context ?marshaller ?f_forward ?(called_async=false) ?(has_task=false) ?(migrate_send_ctx=None) f =
   (* Execute fn f in specified __context, marshalling result with "marshaller".
      If has_task is set then __context has a real task in it that has to be completed. *)
+  let debug, is_migrate_send = match migrate_send_ctx with
+                              | None -> (fun _ -> ()), false
+                              | Some _ -> D.debug, true
+  in
   let exec () =
     (* NB:
        1. If we are a slave we process the call locally assuming the locks have
@@ -69,7 +73,13 @@ let exec_with_context ~__context ?marshaller ?f_forward ?(called_async=false) ?(
        (ie side-effecting) operations and not things like the database layer *)
 
     (* For forwarded task, we should not complete it here, the server which forward the task will complete it. However for the task forwarded by client, which param `has_task` is set with `true`, we have to complete it also. *)
-    let need_complete = has_task || (not (Context.forwarded_task __context)) in
+    let is_forwarded_task = Context.forwarded_task __context in
+
+    let need_complete = has_task || (not is_forwarded_task) in
+    let msg = Printf.sprintf "MIGRATE_SEND need_complete %b" need_complete in
+    (match migrate_send_ctx with
+          | None -> ()
+          | Some _ ->  D.debug "%s" msg);
     try
       let result =
         if not(Pool_role.is_master ())
@@ -80,12 +90,15 @@ let exec_with_context ~__context ?marshaller ?f_forward ?(called_async=false) ?(
             f ~__context
           | Some forward ->
             (* use the forwarding layer (NB this might make a local call ultimately) *)
-            forward ~local_fn:f ~__context
+            debug "MIGRATE_SEND started forwarding";
+            let res = forward ~local_fn:f ~__context in
+            debug "MIGRATE_SEND finished forwarding";
+            res
       in
       if need_complete then begin
         match marshaller with
-        | None    -> TaskHelper.complete ~__context None
-        | Some fn -> TaskHelper.complete ~__context (Some (fn result))
+        | None    -> debug "MIGRATE_SEND marshaller match none"; TaskHelper.complete ~__context None
+        | Some fn -> debug "MIGRATE_SEND marshaller match some"; TaskHelper.complete ~__context (Some (fn result))
       end;
       result
     with
@@ -120,16 +133,29 @@ let dispatch_exn_wrapper f =
 let do_dispatch ?session_id ?forward_op ?self called_async supports_async called_fn_name op_fn
     marshaller_fn fd http_req label generate_task_for =
 
+  let call = match http_req.Http.Request.body with
+          | Some body -> Some (Xmlrpc.call_of_string body).Rpc.name
+          | _ -> D.debug "TESTING no http request body"; None
+  in
   if (called_async && (not supports_async))
   then API.response_of_fault ("No async mode for this operation (rpc: "^called_fn_name^")")
   else
     let __context = Context.of_http_req ?session_id ~generate_task_for ~supports_async ~label ~http_req ~fd in
+    let localhost = Db.Host.get_record ~__context ~self:(!Xapi_globs.localhost_ref) in
+    D.debug "DO_DISPATCH running on %s" (localhost.host_name_label);
+    D.debug "DO_DISPATCH running on %s" (localhost.host_address);
+    let migrate_send_ctx = match call with
+    | Some "VM.migrate_send" | Some "VM_migrate_send" ->
+      Context.debug_task_ctx := Some __context;
+      D.debug "MIGRATE_SEND just created new context. is forwarded: %b" (Context.forwarded_task __context); Some __context
+    | _ -> D.debug "TESTING not migrate_send"; Context.debug_task_ctx := None; None in
+
     if called_async
     then begin
       (* Fork thread in which to execute async call *)
       ignore (Thread.create
                 (fun () ->
-                   exec_with_context ~__context ~called_async ?f_forward:forward_op ~marshaller:marshaller_fn op_fn)
+                   exec_with_context ~__context ~called_async ?f_forward:forward_op ~marshaller:marshaller_fn ~migrate_send_ctx:(Some migrate_send_ctx) op_fn)
                 ());
       (* Return task id immediately *)
       Rpc.success (API.rpc_of_ref_task (Context.get_task_id __context))
