@@ -80,6 +80,8 @@ let exec_with_context ~__context ?marshaller ?f_forward ?(called_async=false) ?(
     (match migrate_send_ctx with
           | None -> ()
           | Some _ ->  D.debug "%s" msg);
+    let need_complete = if is_migrate_send then false else need_complete in
+    debug "MIGRATE_SEND TAMPERING set need_complete to false";
     try
       let result =
         if not(Pool_role.is_master ())
