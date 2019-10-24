@@ -148,9 +148,8 @@ let do_dispatch ?session_id ?forward_op ?self called_async supports_async called
     D.debug "DO_DISPATCH running on %s" (localhost.host_address);
     let migrate_send_ctx = match call with
     | Some "VM.migrate_send" | Some "VM_migrate_send" ->
-      Context.debug_task_ctx := Some __context;
       D.debug "MIGRATE_SEND just created new context. is forwarded: %b" (Context.forwarded_task __context); Some __context
-    | _ -> D.debug "TESTING not migrate_send"; Context.debug_task_ctx := None; None in
+    | _ -> D.debug "TESTING not migrate_send"; None in
 
     if called_async
     then begin
