@@ -135,21 +135,33 @@ let dispatch_exn_wrapper f =
 let do_dispatch ?session_id ?forward_op ?self called_async supports_async called_fn_name op_fn
     marshaller_fn fd http_req label generate_task_for =
 
-  let call = match http_req.Http.Request.body with
-          | Some body -> Some (Xmlrpc.call_of_string body).Rpc.name
-          | _ -> D.debug "TESTING no http request body"; None
+  let call =
+    try
+      match http_req.Http.Request.body with
+            | Some body -> Some (Xmlrpc.call_of_string body).Rpc.name
+            | _ -> D.debug "TESTING no http request body"; None
+    with e ->
+      D.debug "TESTING could not parse http request body. exception: %s" (Printexc.to_string e);
+      None
   in
   if (called_async && (not supports_async))
   then API.response_of_fault ("No async mode for this operation (rpc: "^called_fn_name^")")
   else
     let __context = Context.of_http_req ?session_id ~generate_task_for ~supports_async ~label ~http_req ~fd in
-    let localhost = Db.Host.get_record ~__context ~self:(!Xapi_globs.localhost_ref) in
+    let localhost =
+      try
+        Db.Host.get_record ~__context ~self:(!Xapi_globs.localhost_ref)
+      with ex ->
+        failwith (Printf.sprintf "TESTING could not get localhost. exception: %s" (Printexc.to_string ex))
+    in
+
     D.debug "DO_DISPATCH running on %s" (localhost.host_name_label);
     D.debug "DO_DISPATCH running on %s" (localhost.host_address);
     let migrate_send_ctx = match call with
     | Some "VM.migrate_send" | Some "VM_migrate_send" ->
       D.debug "MIGRATE_SEND just created new context. is forwarded: %b" (Context.forwarded_task __context); Some __context
-    | _ -> D.debug "TESTING not migrate_send"; None in
+    | Some x -> D.debug "TESTING %s is not migrate_send" x; None
+    | _ -> None in
 
     if called_async
     then begin
