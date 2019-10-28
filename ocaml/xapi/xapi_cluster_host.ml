@@ -200,6 +200,12 @@ let forget ~__context ~self =
     )
 
 let enable ~__context ~self =
+  let try_start_clusterd ~host =
+    if not !Xapi_clustering.Daemon.enabled then
+      let host_uuid = Db.Host.get_uuid ~__context ~self:host in
+      D.debug "Cluster_host.enable: xapi-clusterd not running on host %s, attempting to start" host_uuid;
+      Xapi_clustering.Daemon.enable ~__context;
+  in
   with_clustering_lock __LOC__ (fun () ->
       let dbg = Context.string_of_task __context in
       let host = Db.Cluster_host.get_host ~__context ~self in
@@ -215,6 +221,8 @@ let enable ~__context ~self =
         token_coefficient_ms = None;
         name = None
       } in (* TODO: Pass these through from CLI *)
+
+      try_start_clusterd ~host;
       let result = Cluster_client.LocalClient.enable (rpc ~__context) dbg init_config in
       match Idl.IdM.run @@ (Cluster_client.IDL.T.get result) with
       | Result.Ok () ->
