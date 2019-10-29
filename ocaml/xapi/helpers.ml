@@ -1179,26 +1179,24 @@ let retry ~__context ~doc ?(policy = Policy.standard) f =
   (* This is a cancellable operation, so mark the allowed operations on the task *)
   TaskHelper.set_cancellable ~__context;
 
-  let rec loop state =
-    let result = ref None in
-    let state = ref state in
-    while !result = None do
-      try
-        if TaskHelper.is_cancelling ~__context then begin
-          error "%s locking failed: task has been cancelled" doc;
-          TaskHelper.cancel ~__context;
-          raise (Api_errors.Server_error(Api_errors.task_cancelled, [ Ref.string_of (Context.get_task_id __context) ]))
-        end;
-        result := Some (f ())
-      with
-      | Api_errors.Server_error(code, objref :: _ ) as e when code = Api_errors.other_operation_in_progress ->
-        debug "%s locking failed: caught transient failure %s" doc (ExnHelper.string_of_exn e);
-        state := queue_thread (fun () -> Policy.wait ~__context !state e)
-    done;
-    match !result with
-    | Some x -> x
-    | None -> failwith "this should never happen" in
-  loop policy
+  let result = ref None in
+  let state = ref policy in
+  while !result = None do
+    try
+      if TaskHelper.is_cancelling ~__context then begin
+        error "%s locking failed: task has been cancelled" doc;
+        TaskHelper.cancel ~__context;
+        raise (Api_errors.Server_error(Api_errors.task_cancelled, [ Ref.string_of (Context.get_task_id __context) ]))
+      end;
+      result := Some (f ())
+    with
+    | Api_errors.Server_error(code, objref :: _ ) as e when code = Api_errors.other_operation_in_progress ->
+      debug "%s locking failed: caught transient failure %s" doc (ExnHelper.string_of_exn e);
+      state := queue_thread (fun () -> Policy.wait ~__context !state e)
+  done;
+  match !result with
+  | Some x -> x
+  | None -> failwith "this should never happen"
 
 let retry_with_global_lock ~__context ~doc ?policy f =
   retry ~__context ~doc ?policy (fun () -> with_global_lock f)
