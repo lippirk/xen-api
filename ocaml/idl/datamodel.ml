@@ -5256,6 +5256,7 @@ module PUSB = struct
           field ~qualifier:StaticRO ~ty:String ~lifecycle "description" "USB device description" ~default_value:(Some (VString ""));
           field ~qualifier:DynamicRO ~ty:Bool ~lifecycle "passthrough_enabled" "enabled for passthrough" ~default_value:(Some (VBool false));
           field ~qualifier:RW ~ty:(Map (String,String)) ~lifecycle:[Published, rel_inverness, ""] "other_config" "additional configuration" ~default_value:(Some (VMap []));
+          field ~qualifier:StaticRO ~ty:String ~lifecycle:[Published, rel_quebec, ""] "speed" "USB device speed"  ~default_value:(Some (VString ""));
         ]
       ~messages:
         [
