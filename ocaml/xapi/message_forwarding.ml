@@ -688,6 +688,8 @@ module Forward = functor(Local: Custom_actions.CUSTOM_ACTIONS) -> struct
      * event happens - ie, we use the event API simply to wake us up when something
      * interesting has happened. *)
 
+    let longcall ~__context = Local.VM.longcall ~__context
+
     let wait_for_tasks ~__context ~tasks =
       let our_task = Context.get_task_id __context in
       let classes = List.map (fun x -> Printf.sprintf "task/%s" (Ref.string_of x)) (our_task::tasks) in

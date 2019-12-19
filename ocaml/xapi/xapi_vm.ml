@@ -1324,3 +1324,5 @@ let set_NVRAM_EFI_variables ~__context ~self ~value =
     let nvram = Db.VM.get_NVRAM ~__context ~self in
     let value = (key, value) :: List.remove_assoc key nvram in
     Db.VM.set_NVRAM ~__context ~self ~value)
+
+let longcall ~__context = D.error  "STARTING LONGCALL"; Unix.sleep 120; D.error "FINISHING LONGCALL"; "done!"

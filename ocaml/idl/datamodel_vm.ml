@@ -949,6 +949,13 @@ let power_behaviour =
       ~allowed_roles:_R_POOL_ADMIN
       ()
 
+  let longcall = call
+      ~name: "longcall"
+      ~lifecycle:[Prototyped, rel_naples, ""]
+      ~result:(String, "unit result")
+      ~allowed_roles:_R_VM_POWER_ADMIN
+      ()
+
   let migrate_send = call
       ~name: "migrate_send"
       ~in_product_since:rel_tampa
@@ -1196,6 +1203,7 @@ let power_behaviour =
               get_boot_record; send_sysrq; send_trigger;
               query_services;shutdown;
               call_plugin;
+              (* longcall; *)
             ]
           @ [ "changing_memory_live", "Changing the memory settings";
               "awaiting_memory_live", "Waiting for the memory settings to change";
@@ -1357,6 +1365,7 @@ let set_NVRAM_EFI_variables = call ~flags:[`Session]
                   set_domain_type;
                   set_HVM_boot_policy;
                   set_NVRAM_EFI_variables;
+                  longcall;
                 ]
       ~contents:
         ([ uid _vm;
