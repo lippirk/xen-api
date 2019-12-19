@@ -257,4 +257,4 @@ val set_domain_type : __context:Context.t -> self:API.ref_VM -> value:API.domain
 val set_HVM_boot_policy : __context:Context.t -> self:API.ref_VM -> value:string -> unit
 val set_NVRAM_EFI_variables :
   __context:Context.t -> self:API.ref_VM -> value:string -> unit
-val longcall : __context:Context.t -> string
+val longcall : __context:Context.t -> time:int64 -> string

@@ -53,11 +53,12 @@ let remote_rpc_no_retry context hostname (task_opt: API.ref_task option) xml =
   XMLRPC_protocol.rpc ~srcstr:"xapi" ~dststr:"dst_xapi" ~transport ~http xml
 
 (* Use HTTP 1.1, use the stunnel cache and pre-verify the connection *)
-let remote_rpc_retry context hostname (task_opt: API.ref_task option) xml =
+let remote_rpc_retry context hostname (task_opt: API.ref_task option) ?(keep_alive=false) xml =
+  D.error "KEEPALIVE: %b" keep_alive;
   let open Xmlrpc_client in
   let transport = SSL(SSL.make ~use_stunnel_cache:true ?task_id:(may Ref.string_of task_opt) (),
                       hostname, !Xapi_globs.https_port) in
-  let http = xmlrpc ?task_id:(may Ref.string_of task_opt) ~version:"1.1" "/" in
+  let http = xmlrpc ?task_id:(may Ref.string_of task_opt) ~version:"1.1" ~keep_alive "/" in
   XMLRPC_protocol.rpc ~srcstr:"xapi" ~dststr:"dst_xapi" ~transport ~http xml
 
 let call_slave_with_session remote_rpc_fn __context host (task_opt: API.ref_task option) f =
@@ -109,14 +110,31 @@ let do_op_on_common ~local_fn ~__context ~host op f =
     warn "Caught Stunnel_connection_failed while contacting host %s; converting into CANNOT_CONTACT_HOST" (Ref.string_of host);
     raise (Api_errors.Server_error (Api_errors.cannot_contact_host, [Ref.string_of host]))
 
+let already_calling = ref false
+
+let remote_rpc ~__context ~host ~local_fn op =
+  let task_opt = set_forwarding_on_task ~__context ~host in
+  if !already_calling then begin
+    D.error "calling locally";
+    let res = local_fn ~__context in
+    res
+  end
+  else begin
+    D.error "calling remotely";
+    already_calling := true;
+    let res = (call_slave_with_session (remote_rpc_retry ~keep_alive:true)) __context host task_opt op in
+    already_calling := false;
+    res
+  end
+
 (* regular forwarding fn, with session and live-check. Used by most calls, will
    use the connection cache. *)
 (* we don't check "host.enabled" here, because for most messages we want to be able to forward
    them even when the host is disabled; vm.start_on and resume_on do their own check for enabled *)
-let do_op_on ~local_fn ~__context ~host op =
+let do_op_on ~local_fn ~__context ~host ?(keep_alive=true) op =
   check_live ~__context host;
   do_op_on_common ~local_fn ~__context ~host op
-    (call_slave_with_session remote_rpc_retry)
+    (call_slave_with_session (remote_rpc_retry ~keep_alive))
 
 (* with session but no live check. Used by the Pool.hello calling back ONLY
    Don't use the connection cache or retry logic. *)
@@ -688,7 +706,15 @@ module Forward = functor(Local: Custom_actions.CUSTOM_ACTIONS) -> struct
      * event happens - ie, we use the event API simply to wake us up when something
      * interesting has happened. *)
 
-    let longcall ~__context = Local.VM.longcall ~__context
+    let longcall ~__context ~time =
+      let host = Helpers.get_localhost ~__context in
+      remote_rpc ~__context ~host ~local_fn:(Local.VM.longcall ~time) (fun session_id rpc -> Client.VM.longcall ~rpc ~session_id ~time)
+      (* Local.VM.longcall ~__context ~time *)
+      (* let slave = Xapi_pool_helpers.get_slaves_list ~__context |> List.hd in
+      D.error "DEBUG longcall foward to slave";
+      let res = do_op_on ~local_fn:(Local.VM.longcall ~time) ~__context ~host:slave ~keep_alive:true (fun session_id rpc -> Client.VM.longcall ~rpc ~session_id ~time) in
+      D.error "DEBUG longcall foward to slave finished";
+      res *)
 
     let wait_for_tasks ~__context ~tasks =
       let our_task = Context.get_task_id __context in

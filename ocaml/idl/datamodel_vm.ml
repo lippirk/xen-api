@@ -952,6 +952,9 @@ let power_behaviour =
   let longcall = call
       ~name: "longcall"
       ~lifecycle:[Prototyped, rel_naples, ""]
+      ~versioned_params:[
+        {param_type=Int; param_name="time"; param_doc="time"; param_release=tampa_release; param_default=None}
+      ]
       ~result:(String, "unit result")
       ~allowed_roles:_R_VM_POWER_ADMIN
       ()
