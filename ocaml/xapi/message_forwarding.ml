@@ -708,7 +708,8 @@ module Forward = functor(Local: Custom_actions.CUSTOM_ACTIONS) -> struct
 
     let wait_for_tasks ~__context ~tasks =
       let our_task = Context.get_task_id __context in
-      let classes = List.map (fun x -> Printf.sprintf "task/%s" (Ref.string_of x)) (our_task::tasks) in
+      let tasks = our_task::(List.filter (fun t -> t != our_task) tasks) in
+      let classes = List.map (fun x -> Printf.sprintf "task/%s" (Ref.string_of x)) tasks in
 
       let rec process token =
         TaskHelper.exn_if_cancelling ~__context; (* First check if _we_ have been cancelled *)
@@ -725,6 +726,24 @@ module Forward = functor(Local: Custom_actions.CUSTOM_ACTIONS) -> struct
           ()
       in
       process ""
+
+    let result_from_task ~__context ~of_rpc ~name ~t =
+      wait_for_tasks ~__context ~tasks:[t];
+      let fail msg = raise (Api_errors.Server_error (Api_errors.internal_error, [Ref.string_of t; name^": "^msg])) in
+      match Db.Task.get_status ~__context ~self:t with
+      | `pending                 -> fail "task shouldn't be pending - we just waited on it"
+      | `cancelled | `cancelling -> raise (Api_errors.Server_error (Api_errors.task_cancelled, [Ref.string_of t]))
+      | `failure                 ->
+        begin match Db.Task.get_error_info ~__context ~self:t with
+        | [] | [_]     -> fail "couldn't extract error info from task"
+        | code::params -> raise (Api_errors.Server_error (code, params))
+        end
+      | `success                 ->
+        begin match Db.Task.get_result ~__context ~self:t with
+        | "" -> fail "nothing was written to task result"
+        | s  -> try Xmlrpc.of_string s |> of_rpc
+                with e -> fail (Printf.sprintf "result wasn't placed in task's (ref = %s) result field. error: %s" (Ref.string_of t) (Printexc.to_string e))
+        end
 
     let cancel ~__context ~vm ~ops =
       let cancelled = Listext.filter_map (fun (task,op) ->
@@ -1727,7 +1746,16 @@ module Forward = functor(Local: Custom_actions.CUSTOM_ACTIONS) -> struct
                assert_can_migrate ~__context ~vm ~dest ~live ~vdi_map ~vif_map ~vgpu_map ~options
              );
            forwarder ~local_fn ~__context ~vm
-             (fun session_id rpc -> Client.VM.migrate_send rpc session_id vm dest live vdi_map vif_map options vgpu_map)
+             (fun session_id rpc ->
+               try
+                 let t = Client.InternalAsync.VM.migrate_send rpc session_id vm dest live vdi_map vif_map options vgpu_map in
+                 D.info "VM.migrate_send waiting for migration to complete... on task %s" (Ref.string_of t);
+                 result_from_task ~__context ~of_rpc:API.ref_VM_of_rpc ~name:"migrate_send" ~t
+               (* in case we are contacting a version of xapi which does not have the InternalAsync method, we retry with the old behaviour *)
+               with Api_errors.Server_error(code, params) when code=Api_errors.message_method_unknown ->
+                 D.info "VM.migrate_send: InternalAsync.VM.migrate_send is not known by destination - this means that we are dealing with an old version of the API. Try VM.migrate_send instead.";
+                 Client.VM.migrate_send rpc session_id vm dest live vdi_map vif_map options vgpu_map
+             )
         )
 
     let send_trigger ~__context ~vm ~trigger =
