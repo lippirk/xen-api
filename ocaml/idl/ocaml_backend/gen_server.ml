@@ -228,11 +228,11 @@ let operation (obj: obj) (x: message) =
         "let supports_async = true in";
         "let generate_task_for = true in";
         "let forward_op = fun ~local_fn ~__context -> (rbac __context (fun()-> (Forward.Host.call_extension ~__context:(Context.check_for_foreign_database ~__context) ~host ~call:call_string) )) in";
-        "let resp = Server_helpers.do_dispatch ~session_id ~forward_op __async supports_async __call local_op marshaller fd http_req __label generate_task_for in";
+        "let resp = Server_helpers.do_dispatch ~session_id ~forward_op __sync_ty supports_async __call local_op marshaller fd http_req __label generate_task_for in";
         "if resp.Rpc.success then";
         "  try";
         "    " ^ (debug "HostExtension '%s' resp \"%s\"" [ "__call (Jsonrpc.string_of_response resp)" ]);
-        "    ignore(if not __async then let _ = "^result_unmarshaller^" resp.contents in ());";
+        "    ignore(if __sync_ty = Sync then let _ = "^result_unmarshaller^" resp.contents in ());";
         "    resp";
         "  with";
         "  | _ -> API.response_of_failure Api_errors.internal_error [string_of_rpc resp.Rpc.contents]";
@@ -261,7 +261,7 @@ let operation (obj: obj) (x: message) =
 
       let body_exp =
         [
-          Printf.sprintf "let resp = Server_helpers.do_dispatch %s %s __async supports_async __call local_op marshaller fd http_req __label generate_task_for in"
+          Printf.sprintf "let resp = Server_helpers.do_dispatch %s %s __sync_ty supports_async __call local_op marshaller fd http_req __label generate_task_for in"
             (if x.msg_session then "~session_id" else "")
             (if Gen_empty_custom.operation_requires_side_effect x then "~forward_op" else "");
           (*	"P.debug \"Server RPC response: %s\" (Rpc.to_string (resp.Rpc.contents));"; *)
@@ -317,16 +317,15 @@ let gen_module api : O.Module.t =
               "let __call, __params = call.Rpc.name, call.Rpc.params in";
               "List.iter (fun p -> let s = Rpc.to_string p in if not (Xapi_stdext_encodings.Encodings.UTF8_XML.is_valid s) then";
               "raise (Api_errors.Server_error(Api_errors.invalid_value, [\"Invalid UTF-8 string in parameter\"; s])))  __params;";
-              "let __async = Server_helpers.is_async __call in";
+              "let (__sync_ty, __call) = Server_helpers.sync_ty_and_maybe_remove_prefix __call in";
               "let __label = __call in";
-              "let __call = if __async then Server_helpers.remove_async_prefix __call else __call in";
               "let subtask_of = if http_req.Http.Request.task <> None then http_req.Http.Request.task else http_req.Http.Request.subtask_of in";
               "let http_other_config = Context.get_http_other_config http_req in";
               "let may f = function | None -> None | Some x -> Some (f x) in";
               "Server_helpers.exec_with_new_task (\"dispatch:\"^__call^\"\") ~http_other_config ?subtask_of:(may Ref.of_string subtask_of) (fun __context ->";
 (*
 	      "if not (Hashtbl.mem supress_printing_for_these_messages __call) then ";
-	      debug "%s %s" [ "__call"; "(if __async then \"(async)\" else \"\")" ];
+	      debug "%s %s" [ "__call"; "(if __sync_ty then \"(async)\" else \"\")" ];
 *)
               "Server_helpers.dispatch_exn_wrapper (fun () -> (match __call with ";
             ] @ (List.flatten (List.map obj all_objs)) @ [

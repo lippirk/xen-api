@@ -17,6 +17,8 @@ open Xstringext
 open Pervasiveext
 open Threadext
 
+module DT = Datamodel_types
+
 module D = Debug.Make(struct let name = "dispatcher" end)
 open D
 
@@ -37,17 +39,27 @@ let async_wire_name = "Async."
 
 let async_length = String.length async_wire_name
 
+let internal_async_wire_name = "InternalAsync."
+
+let internal_async_length = String.length internal_async_wire_name
+
 (* hardcode the wire-name messages that we want to supress the printing of in the logs to avoid log spam: *)
 let supress_printing_for_these_messages : (string,unit) Hashtbl.t =
   let tbl = Hashtbl.create 20 in
   List.iter (fun k -> Hashtbl.replace tbl k ()) ["host.tickle_heartbeat"; "session.login_with_password"; "session.logout"; "session.local_logout"; "session.slave_local_login"; "session.slave_local_login_with_password"];
   tbl
 
-let is_async x =
-  String.length x > async_length && (String.sub x 0 async_length = async_wire_name)
-
-let remove_async_prefix x =
-  String.sub x async_length (String.length x - async_length)
+(** removes Async. or InternalAsync. prefixes if they exist
+  * NB. X_y api call format does not work with Async (and didn't previously) *)
+let sync_ty_and_maybe_remove_prefix x =
+  let len_x = String.length x in
+  (* expect more async calls than internal_async, so check for async first *)
+  if len_x > async_length && String.sub x 0 async_length = async_wire_name then
+    (DT.Async, String.sub x async_length (String.length x - async_length))
+  else if len_x > internal_async_length && String.sub x 0 internal_async_length = internal_async_wire_name then
+    (InternalAsync, String.sub x internal_async_length (String.length x - internal_async_length))
+  else
+    (Sync, x)
 
 let unknown_rpc_failure func =
   API.response_of_failure Api_errors.message_method_unknown [func]
@@ -117,15 +129,20 @@ let dispatch_exn_wrapper f =
     f()
   with exn -> let code, params = ExnHelper.error_of_exn exn in API.response_of_failure code params
 
-let do_dispatch ?session_id ?forward_op ?self called_async supports_async called_fn_name op_fn
+let do_dispatch ?session_id ?forward_op ?self sync_ty supports_async called_fn_name op_fn
     marshaller_fn fd http_req label generate_task_for =
 
+  let called_async = sync_ty != DT.Sync in
   if (called_async && (not supports_async))
   then API.response_of_fault ("No async mode for this operation (rpc: "^called_fn_name^")")
   else
     let __context = Context.of_http_req ?session_id ~generate_task_for ~supports_async ~label ~http_req ~fd in
-    if called_async
-    then begin
+    let sync () =
+      exec_with_context ~__context ~called_async ?f_forward:forward_op ~marshaller:marshaller_fn op_fn |>
+      marshaller_fn |>
+      Rpc.success
+    in
+    let default_async () =
       (* Fork thread in which to execute async call *)
       ignore (Thread.create
                 (fun () ->
@@ -133,11 +150,25 @@ let do_dispatch ?session_id ?forward_op ?self called_async supports_async called
                 ());
       (* Return task id immediately *)
       Rpc.success (API.rpc_of_ref_task (Context.get_task_id __context))
-    end else
-      let result =
-        exec_with_context ~__context ~called_async ?f_forward:forward_op ~marshaller:marshaller_fn op_fn
-      in
-      Rpc.success (marshaller_fn result)
+    in
+    let internal_async () =
+      (** similar to `default_async`, except we are zealous when completing the task
+        * this should be used when converting sync xapi <-> xapi calls to async *)
+      ignore (Thread.create
+                (fun () ->
+                  try
+                    let res = exec_with_context ~__context ~called_async ?f_forward:forward_op ~marshaller:marshaller_fn op_fn |> marshaller_fn in
+                    TaskHelper.complete ~__context (Some res)
+                  with e ->
+                    TaskHelper.failed ~__context e;
+                    raise e (* kill thread *)
+                ) ());
+      Rpc.success (API.rpc_of_ref_task (Context.get_task_id __context))
+    in
+    match sync_ty with
+    | Sync          -> sync ()
+    | Async         -> default_async ()
+    | InternalAsync -> internal_async ()
 
 let exec_with_new_task ?http_other_config ?quiet ?subtask_of ?session_id ?task_in_database ?task_description ?origin task_name f =
   exec_with_context
