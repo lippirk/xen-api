@@ -20,6 +20,7 @@ open Printf
 
 let module_name = "ClientF"
 let async_module_name = "Async"
+let internal_async_module_name = "InternalAsync"
 let signature_name = "API"
 
 (** If true then all create arguments are packaged in an RPC <struct>
@@ -209,6 +210,14 @@ let gen_module api : O.Module.t =
       ~name:async_module_name
       ~elements:(List.map (fun x -> O.Module.Module (obj ~sync_ty:Async x)) async_objs) () in
 
+  let internal_async =
+    let api = client_api ~sync_ty:InternalAsync api in
+    let int_async_objs = Dm_api.objects_of_api api in
+
+    O.Module.make
+      ~name:internal_async_module_name
+      ~elements:(List.map (fun x -> O.Module.Module (obj ~sync_ty:InternalAsync x)) int_async_objs) () in
+
   let api = client_api ~sync_ty:Sync api in
   let all_objs = Dm_api.objects_of_api api in
   (* Generate the main client functor *)
@@ -216,7 +225,7 @@ let gen_module api : O.Module.t =
     ~name:module_name
     ~preamble:preamble
     ~args:["X : IO"]
-    ~elements:(O.Module.Module async ::
+    ~elements:(O.Module.Module internal_async :: O.Module.Module async ::
                List.map (fun x -> O.Module.Module (obj ~sync_ty:Sync x)) all_objs) ()
 
 let gen_signature api : O.Signature.t =

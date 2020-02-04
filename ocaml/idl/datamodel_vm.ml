@@ -950,6 +950,7 @@ let power_behaviour =
       ()
 
   let migrate_send = call
+      ~flags:(`InternalAsync::default_call_flags)
       ~name: "migrate_send"
       ~in_product_since:rel_tampa
       ~doc: "Migrate the VM to another host.  This can only be called when the specified VM is in the Running state."
