@@ -521,6 +521,7 @@ let wire_name_common sep ~sync_ty (obj: obj) (msg: message) =
   match sync_ty with
   | Sync -> sync_name
   | Async -> Printf.sprintf "Async%s%s" sep sync_name
+  | InternalAsync -> Printf.sprintf "InternalAsync%s%s" sep sync_name
 
 let wire_name = wire_name_common "."
 let alternative_wire_name = wire_name_common "_"

@@ -373,7 +373,10 @@ and doc_tag = VM_lifecycle | Snapshots | Networking | Memory | Windows
 
 and forward = Extension of string | HostExtension of string
 
-and call_synchronicity = Sync | Async
+(** Sync calls do not spawn a new thread, returning expected result
+  * Async calls spawn a new thread to process requests and return a task id, which can be used to poll that task
+  * InternalAsync is the same as Async, except the receiver of an InternalAsync is guaranteed to complete the task that is created *)
+and call_synchronicity = Sync | Async | InternalAsync
 
 (** Types of RPC messages; in addition to those generated for object fields *)
 and message = {

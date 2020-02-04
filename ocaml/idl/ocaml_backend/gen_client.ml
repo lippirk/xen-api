@@ -41,13 +41,22 @@ let key (ty: DT.ty)   = custom _key ty
 let of_param p  = custom (OU.ocaml_of_record_field [p.param_name]) p.param_type
 let param_of_field fld = custom (OU.ocaml_of_record_field fld.full_name) fld.ty
 
-(** True if a message has an asynchronous counterpart *)
-let has_type sync_ty msg = match sync_ty, msg with
-  | Sync, _ -> true
-  | Async, { msg_tag = FromField(_); } -> false
-  | Async, { msg_tag = Custom; msg_async; } -> msg_async = sync_ty
-  | Async, { msg_tag = FromObject(Make | Delete) } -> true
-  | Async, { msg_tag = FromObject(_) } -> false
+(** Used to determine which rpc functions to generate given its synchronicity
+  * For example, we generate 3 functions for InternalAsync calls, normal Sync, Async, and internal Async
+  * for rpc calls labelled as Async we generate only Async and Sync functions
+  * for Sync rpc calls, we only generate Sync functions
+  * for some msgs, we ignore their synchronicity *)
+let has_type sync_ty msg =
+  match sync_ty, msg with
+  | Sync, _                                                        -> true
+  | (Async | InternalAsync), {msg_tag = FromField(_)}              -> false
+  | Async,                   {msg_tag = FromObject(Make | Delete)} -> true
+  | (Async | InternalAsync), {msg_tag = FromObject(_)}             -> false
+  | (Async | InternalAsync), {msg_tag = Custom; msg_async}         ->
+    match msg_async with
+    | Sync          -> false
+    | Async         -> sync_ty = Async
+    | InternalAsync -> sync_ty = InternalAsync || sync_ty = Async
 
 (* true if msg is constructor or desctructor and the msg's object specifies not to make constructor/destructor *)
 let objfilter msg api =
@@ -134,11 +143,11 @@ let gen_module api : O.Module.t =
     let task = DT.Ref Datamodel_common._task in
 
     let from_xmlrpc t = match x.msg_custom_marshaller, t, sync_ty with
-      | true, _, Sync             -> "" (* already in RPC form *)
-      | true, _, Async            -> failwith "No implementation for custom_marshaller && async"
-      | false, Some (ty,_), Sync  -> Printf.sprintf "%s_of_rpc " (OU.alias_of_ty ty)
-      | false, _,           Async -> Printf.sprintf "%s_of_rpc " (OU.alias_of_ty task)
-      | false, None,        Sync  -> "ignore" in
+      | true, _,            Sync                   -> "" (* already in RPC form *)
+      | true, _,           (Async | InternalAsync) -> failwith "No implementation for custom_marshaller && async"
+      | false, Some (ty,_), Sync                   -> Printf.sprintf "%s_of_rpc " (OU.alias_of_ty ty)
+      | false, _,          (Async | InternalAsync) -> Printf.sprintf "%s_of_rpc " (OU.alias_of_ty task)
+      | false, None,        Sync                   -> "ignore" in
 
     let wire_name = DU.wire_name ~sync_ty obj x in
 

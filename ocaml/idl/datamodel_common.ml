@@ -379,6 +379,15 @@ let call ~name ?(doc="") ?(in_oss_since=Some "3.0.3") ?in_product_since ?interna
       internal_deprecated_since = get_deprecated lifecycle;
     }
   in
+  let msg_async =
+    let is_async = List.mem `Async flags in
+    let is_internal_async = List.mem `InternalAsync flags in
+    match is_async, is_internal_async with
+    | false, true  -> failwith (Printf.sprintf "%s has been passed flag `InternalAsync, but not `Async. Consider passing `Async as well" name)
+    | true, true   -> InternalAsync
+    | false, false -> Sync
+    | true, false  -> Async
+  in
   {
     msg_name = name;
     msg_params =
@@ -388,7 +397,7 @@ let call ~name ?(doc="") ?(in_oss_since=Some "3.0.3") ?in_product_since ?interna
                                                 param_doc=pdoc; param_release=call_release; param_default=None}) params
        | Some ps -> ps);
     msg_result = result; msg_doc = doc;
-    msg_session = List.mem `Session flags; msg_async = if List.mem `Async flags then Async else Sync;
+    msg_session = List.mem `Session flags; msg_async;
     msg_db_only = db_only;
     msg_release = call_release;
     msg_lifecycle = lifecycle;
