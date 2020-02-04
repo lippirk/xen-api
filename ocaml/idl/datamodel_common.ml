@@ -341,8 +341,10 @@ let get_deprecated lifecycle =
     Some deprecated
   with Not_found -> None
 
+let default_call_flags = [`Session; `Async]
+
 let call ~name ?(doc="") ?(in_oss_since=Some "3.0.3") ?in_product_since ?internal_deprecated_since
-    ?result ?(flags=[`Session;`Async])
+    ?result ?(flags=default_call_flags)
     ?(effect=true) ?(tag=Custom) ?(errs=[]) ?(custom_marshaller=false) ?(db_only=false)
     ?(no_current_operations=false) ?(secret=false) ?(hide_from_docs=false)
     ?(pool_internal=false)
@@ -386,7 +388,7 @@ let call ~name ?(doc="") ?(in_oss_since=Some "3.0.3") ?in_product_since ?interna
                                                 param_doc=pdoc; param_release=call_release; param_default=None}) params
        | Some ps -> ps);
     msg_result = result; msg_doc = doc;
-    msg_session = List.mem `Session flags; msg_async = List.mem `Async flags;
+    msg_session = List.mem `Session flags; msg_async = if List.mem `Async flags then Async else Sync;
     msg_db_only = db_only;
     msg_release = call_release;
     msg_lifecycle = lifecycle;

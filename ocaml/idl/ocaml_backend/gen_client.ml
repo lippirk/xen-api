@@ -42,11 +42,12 @@ let of_param p  = custom (OU.ocaml_of_record_field [p.param_name]) p.param_type
 let param_of_field fld = custom (OU.ocaml_of_record_field fld.full_name) fld.ty
 
 (** True if a message has an asynchronous counterpart *)
-let has_async = function
-  | { msg_tag = FromField(_) } -> false
-  | { msg_tag = Custom; msg_async = async } -> async
-  | { msg_tag = FromObject(Make | Delete) } -> true
-  | { msg_tag = FromObject(_) } -> false
+let has_type sync_ty msg = match sync_ty, msg with
+  | Sync, _ -> true
+  | Async, { msg_tag = FromField(_); } -> false
+  | Async, { msg_tag = Custom; msg_async; } -> msg_async = sync_ty
+  | Async, { msg_tag = FromObject(Make | Delete) } -> true
+  | Async, { msg_tag = FromObject(_) } -> false
 
 (* true if msg is constructor or desctructor and the msg's object specifies not to make constructor/destructor *)
 let objfilter msg api =
@@ -60,10 +61,9 @@ let objfilter msg api =
       (msg.DT.msg_tag = DT.FromObject (DT.Delete)) in
     not msg_is_con_or_des || obj_gen_con_and_des
 
-let client_api ~sync api =
+let client_api ~sync_ty api =
   let filter f = Dm_api.filter (fun _ -> true) (fun _ -> true) f in
-  let api = filter (fun msg-> (DU.on_client_side msg) && (objfilter msg api)) api in
-  if sync then api else filter has_async api
+  filter (fun msg -> DU.on_client_side msg && objfilter msg api && has_type sync_ty msg) api
 
 (* Client constructor takes all object fields which are StaticRO or RW *)
 let ctor_fields (obj: obj) =
@@ -88,7 +88,7 @@ let args_of_message ?(expand_record=true) (obj: obj) ( { msg_tag = tag } as msg)
 
 let gen_module api : O.Module.t =
   (* Generate any additional helper functions for an operation here *)
-  let helper_record_constructor ~sync (obj: obj) (x: message) =
+  let helper_record_constructor ~sync_ty (obj: obj) (x: message) =
     if x.msg_tag <> FromObject(Make) then []
     else [
       let fields = ctor_fields obj in
@@ -101,14 +101,16 @@ let gen_module api : O.Module.t =
       O.Let.make
         ~name:(x.msg_name ^ "_from_record")
         ~params:(_rpc :: (args_of_message ~expand_record:false obj x))
-        ~ty:(if sync then (match x.msg_result with Some (x,_) ->
-            OU.alias_of_ty x | _ -> "unit")
-           else OU.alias_of_ty (DT.Ref Datamodel_common._task))
+        ~ty:(
+          match sync_ty, x.msg_result with
+          | Sync, Some (x, _) -> OU.alias_of_ty x
+          | Sync, _           -> "unit"
+          | _, _              -> OU.alias_of_ty (DT.Ref Datamodel_common._task))
         ~body:(x.msg_name :: "~rpc" :: all) ()
     ] in
 
   (* Convert an operation into a Let-binding *)
-  let operation ~sync (obj: obj) (x: message) =
+  let operation ~sync_ty (obj: obj) (x: message) =
     let args = args_of_message obj x in
 
     let to_rpc (arg: O.param) =
@@ -131,22 +133,23 @@ let gen_module api : O.Module.t =
 
     let task = DT.Ref Datamodel_common._task in
 
-    let from_xmlrpc t = match x.msg_custom_marshaller, t, sync with
-      | true, _, true             -> "" (* already in RPC form *)
-      | true, _, false            -> failwith "No implementation for custom_marshaller && async"
-      | false, Some (ty,_), true  -> Printf.sprintf "%s_of_rpc " (OU.alias_of_ty ty)
-      | false, _,           false -> Printf.sprintf "%s_of_rpc " (OU.alias_of_ty task)
-      | false, None,        true  -> "ignore" in
+    let from_xmlrpc t = match x.msg_custom_marshaller, t, sync_ty with
+      | true, _, Sync             -> "" (* already in RPC form *)
+      | true, _, Async            -> failwith "No implementation for custom_marshaller && async"
+      | false, Some (ty,_), Sync  -> Printf.sprintf "%s_of_rpc " (OU.alias_of_ty ty)
+      | false, _,           Async -> Printf.sprintf "%s_of_rpc " (OU.alias_of_ty task)
+      | false, None,        Sync  -> "ignore" in
 
-    let wire_name = DU.wire_name ~sync obj x in
+    let wire_name = DU.wire_name ~sync_ty obj x in
 
     let return_type =
       if x.msg_custom_marshaller
       then "Rpc.t"
       else begin
-        if sync then (match x.msg_result with Some (x,_) ->
-            OU.alias_of_ty x | _ -> "unit")
-        else OU.alias_of_ty task
+        match sync_ty, x.msg_result with
+        | Sync, Some(x, _) -> OU.alias_of_ty x
+        | Sync, _          -> "unit"
+        | _, _             -> OU.alias_of_ty task
       end in
 
     O.Let.make
@@ -163,10 +166,10 @@ let gen_module api : O.Module.t =
         ]) () in
 
   (* Convert an object into a Module *)
-  let obj ~sync (obj: obj) =
+  let obj ~sync_ty (obj: obj) =
     let fields_of = List.map (fun x -> O.Module.Let x) in
-    let operations = List.map (fun x -> operation ~sync obj x) obj.messages in
-    let helpers = List.concat (List.map (fun x -> helper_record_constructor ~sync obj x) obj.messages) in
+    let operations = List.map (fun x -> operation ~sync_ty obj x) obj.messages in
+    let helpers = List.concat (List.map (fun x -> helper_record_constructor ~sync_ty obj x) obj.messages) in
     let fields = fields_of (operations @ helpers) in
 (*
     let fields = List.map (fun x -> O.Module.Let (operation ~sync obj x)) obj.messages in
@@ -190,14 +193,14 @@ let gen_module api : O.Module.t =
   in
   let async =
     (* Small subset of the API is async *)
-    let api = client_api ~sync:false api in
+    let api = client_api ~sync_ty:Async api in
     let async_objs = Dm_api.objects_of_api api in
 
     O.Module.make
       ~name:async_module_name
-      ~elements:(List.map (fun x -> O.Module.Module (obj ~sync:false x)) async_objs) () in
+      ~elements:(List.map (fun x -> O.Module.Module (obj ~sync_ty:Async x)) async_objs) () in
 
-  let api = client_api ~sync:true api in
+  let api = client_api ~sync_ty:Sync api in
   let all_objs = Dm_api.objects_of_api api in
   (* Generate the main client functor *)
   O.Module.make
@@ -205,7 +208,7 @@ let gen_module api : O.Module.t =
     ~preamble:preamble
     ~args:["X : IO"]
     ~elements:(O.Module.Module async ::
-               List.map (fun x -> O.Module.Module (obj ~sync:true x)) all_objs) ()
+               List.map (fun x -> O.Module.Module (obj ~sync_ty:Sync x)) all_objs) ()
 
 let gen_signature api : O.Signature.t =
   (* Ensure the 'API' signature (the client's PoV matches the client implementation) *)

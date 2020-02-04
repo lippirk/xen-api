@@ -373,6 +373,8 @@ and doc_tag = VM_lifecycle | Snapshots | Networking | Memory | Windows
 
 and forward = Extension of string | HostExtension of string
 
+and call_synchronicity = Sync | Async
+
 (** Types of RPC messages; in addition to those generated for object fields *)
 and message = {
   msg_name: string;
@@ -380,7 +382,7 @@ and message = {
   msg_result: (ty * string) option;
   msg_errors: error list;
   msg_doc: string;
-  msg_async: bool;
+  msg_async: call_synchronicity;
   msg_session: bool;
   msg_secret: bool; (* don't put stuff in logs *)
   msg_pool_internal: bool; (* only allow on "pool-login" sessions *)
@@ -436,7 +438,7 @@ let default_message = {
   msg_result = None;
   msg_errors = [];
   msg_doc = "This message has no documentation.";
-  msg_async = true;
+  msg_async = Async;
   msg_session = true;
   msg_secret = false;
   msg_pool_internal = true;
@@ -521,3 +523,5 @@ let rec type_checks v t =
   | VRef r, Ref _ -> true
   | VCustom _, _ -> true (* Type checks defered to phase-2 compile time *)
   | _, _ -> false
+
+let is_async msg = msg.msg_async != Sync

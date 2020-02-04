@@ -262,7 +262,7 @@ let check api emergency_calls =
       (fun obj ->
          List.iter
            (fun msg ->
-              if msg.msg_async && (List.mem (obj.name,msg.msg_name) emergency_calls) then
+              if is_async msg && (List.mem (obj.name,msg.msg_name) emergency_calls) then
                 failwith (Printf.sprintf "Msg %s.%s is marked as supports async and also appears in emergency_call list. These are mutually exclusive choices." obj.name msg.msg_name)
            ) obj.messages
       ) system in

@@ -121,8 +121,8 @@ let forward req body rpc =
 (* Whitelist of functions that do *not* get forwarded to the master (e.g. session.login_with_password) *)
 (* !!! Note, this only blocks synchronous calls. As is it happens, all the calls we want to block right now are only
    synchronous. However, we'd probably want to change this is the list starts getting longer. *)
-let whitelist = List.map (fun (obj,msg) -> Datamodel_utils.wire_name ~sync:true obj msg) Datamodel.whitelist
-let emergency_call_list = List.map (fun (obj,msg) -> Datamodel_utils.wire_name ~sync:true obj msg) Datamodel.emergency_calls
+let whitelist = List.map (fun (obj,msg) -> Datamodel_utils.wire_name ~sync_ty:Sync obj msg) Datamodel.whitelist
+let emergency_call_list = List.map (fun (obj,msg) -> Datamodel_utils.wire_name ~sync_ty:Sync obj msg) Datamodel.emergency_calls
 
 let is_himn_req req =
   match req.Http.Request.host with

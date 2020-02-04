@@ -95,8 +95,8 @@ let operation (obj: obj) (x: message) =
     | false, Some (ty,_) -> Printf.sprintf "(fun x -> %s_of_rpc x)" (OU.alias_of_ty ty)
     | false, None -> "(fun _ -> ())" in
 
-  let wire_name = DU.wire_name ~sync:true obj x in
-  let alternative_wire_name = DU.alternative_wire_name ~sync:true obj x in
+  let wire_name = DU.wire_name ~sync_ty:Sync obj x in
+  let alternative_wire_name = DU.alternative_wire_name ~sync_ty:Sync obj x in
 
   let orig_string_args =
     if is_ctor then [O.string_of_param Client.session;"__structure"]
@@ -141,7 +141,7 @@ let operation (obj: obj) (x: message) =
       ("~__context:" ^ Gen_common.context_with_correct_database)
       (String.concat "" (List.map (fun arg -> " ~" ^ (O.string_of_param arg)) args_without_session)) in
 
-  let has_async = Client.has_async x in
+  let has_async = Client.has_type Async x in
 
   let comments = List.concat [
       if Gen_empty_custom.operation_requires_side_effect x
@@ -290,7 +290,7 @@ let operation (obj: obj) (x: message) =
 
 let gen_module api : O.Module.t =
   (* For testing purposes the ocaml client and server are kept in sync *)
-  let api = Client.client_api ~sync:true api in
+  let api = Client.client_api ~sync_ty:Sync api in
   let obj (obj: obj) = List.map (operation obj) obj.messages in
   let all_objs = Dm_api.objects_of_api api in
 
@@ -333,7 +333,7 @@ let gen_module api : O.Module.t =
               "| \"system.listMethods\" -> ";
               "  success (rpc_of_string_set [" ] @
             begin
-              let objmsgs obj = List.map (fun msg -> Printf.sprintf "\"%s\";" (DU.wire_name ~sync:true obj msg)) obj.messages in
+              let objmsgs obj = List.map (fun msg -> Printf.sprintf "\"%s\";" (DU.wire_name ~sync_ty:Sync obj msg)) obj.messages in
               let allmsg = List.map (fun obj -> String.concat "" (objmsgs obj)) all_objs in
               allmsg
             end @ [

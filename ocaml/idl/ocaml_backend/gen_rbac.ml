@@ -220,7 +220,7 @@ let get_key_permission_name permission key_name =
 let add_permission_to_roles roles_permissions (obj: obj) (x: message) =
   let msg_allowed_roles = x.msg_allowed_roles in
   let msg_map_keys_roles = x.msg_map_keys_roles in
-  let wire_name = DU.wire_name ~sync:true obj x in
+  let wire_name = DU.wire_name ~sync_ty:Sync obj x in
   match msg_allowed_roles with
   | None -> (
       (*roles_permissions (*<-in case no-role messages are allowed, use this*)*)
@@ -294,7 +294,7 @@ let apicalls obj =
 
 (* Returns a (static_role,permission list) list generated from datamodel.ml *)
 let gen_permissions_of_static_roles highapi =
-  let api = Client.client_api ~sync:true highapi in
+  let api = Client.client_api ~sync_ty:Async highapi in
   let all_objs = Dm_api.objects_of_api api in
 
   let rec get_roles_permissions_of_objs = function

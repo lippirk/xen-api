@@ -204,7 +204,7 @@ let new_messages_of_field x order fld =
   let common = { msg_name = ""; msg_params = []; msg_result = None;
                  msg_errors = [];
                  msg_doc = "no documentation available";
-                 msg_async = false;
+                 msg_async = Sync;
                  msg_session = true;
                  msg_secret = false;
                  msg_release = fld.release;
@@ -325,7 +325,7 @@ let messages_of_obj (x: obj) document_order : message list =
 
   (* Dummy message *)
   let common = { msg_secret=false; msg_name=""; msg_params=[]; msg_result=None; msg_errors = []; msg_doc="";
-                 msg_async=false; msg_custom_marshaller = false; msg_db_only = false;
+                 msg_async=Sync; msg_custom_marshaller = false; msg_db_only = false;
                  msg_no_current_operations = false;
                  msg_hide_from_docs = false; msg_pool_internal = false;
                  msg_session=false; msg_release=x.obj_release; msg_lifecycle=x.obj_lifecycle; msg_has_effect=false; msg_tag=Custom;
@@ -347,7 +347,7 @@ let messages_of_obj (x: obj) document_order : message list =
                                       msg_result = Some (Ref x.name, "reference to the newly created object");
                                       msg_doc = doccomment x name;
                                       msg_lifecycle = get_lifecycle x name;
-                                      msg_async = true;
+                                      msg_async = Async;
                                       msg_session = true;
                                       msg_has_effect = true;
                                       msg_allowed_roles = x.obj_allowed_roles;
@@ -359,7 +359,7 @@ let messages_of_obj (x: obj) document_order : message list =
                                        msg_result = None;
                                        msg_doc = doccomment x name;
                                        msg_lifecycle = get_lifecycle x name;
-                                       msg_async = true;
+                                       msg_async = Async;
                                        msg_session = true;
                                        msg_has_effect = true;
                                        msg_allowed_roles = x.obj_allowed_roles;
@@ -371,7 +371,7 @@ let messages_of_obj (x: obj) document_order : message list =
                                            msg_result = Some (Ref x.name, "reference to the object");
                                            msg_doc = doccomment x name;
                                            msg_lifecycle = get_lifecycle x name;
-                                           msg_async = false;
+                                           msg_async = Sync;
                                            msg_session = true;
                                            msg_has_effect = false;
                                            msg_allowed_roles = x.obj_implicit_msg_allowed_roles;
@@ -383,7 +383,7 @@ let messages_of_obj (x: obj) document_order : message list =
                                                               msg_result = Some (Set(Ref x.name), "references to objects with matching names");
                                                               msg_doc = doccomment x name;
                                                               msg_lifecycle = get_lifecycle x name;
-                                                              msg_async = false;
+                                                              msg_async = Sync;
                                                               msg_session = true;
                                                               msg_has_effect = false;
                                                               msg_allowed_roles = x.obj_implicit_msg_allowed_roles;
@@ -395,7 +395,7 @@ let messages_of_obj (x: obj) document_order : message list =
                                                 msg_result = Some (Record x.name, "all fields from the object");
                                                 msg_doc = doccomment x name;
                                                 msg_lifecycle = get_lifecycle x name;
-                                                msg_async = false;
+                                                msg_async = Sync;
                                                 msg_session = true;
                                                 msg_has_effect = false;
                                                 msg_allowed_roles = x.obj_implicit_msg_allowed_roles;
@@ -408,7 +408,7 @@ let messages_of_obj (x: obj) document_order : message list =
                                                                   msg_result = Some (Record x.name, "all fields from the object, including implementation-only ones");
                                                                   msg_doc = doccomment x name;
                                                                   msg_lifecycle = get_lifecycle x name;
-                                                                  msg_async = false;
+                                                                  msg_async = Sync;
                                                                   msg_session = true;
                                                                   msg_db_only = true;
                                                                   msg_release = {opensource=[]; internal=[]; internal_deprecated_since=None}; (* internal messages not in an any API releases... *)
@@ -424,7 +424,7 @@ let messages_of_obj (x: obj) document_order : message list =
                                           msg_result = Some(Set(Ref x.name), "references to all objects");
                                           msg_doc = doccomment x name;
                                           msg_lifecycle = get_lifecycle x name;
-                                          msg_async = false;
+                                          msg_async = Sync;
                                           msg_session = true; (* but irrelevant because currently not exposed *)
                                           msg_release = {opensource=[]; internal=[]; internal_deprecated_since=None};
                                           msg_db_only = true;
@@ -516,11 +516,11 @@ let on_client_side (x: message) : bool = match x with
     x.msg_name <> "get_record"
   | _ -> true
 
-let wire_name_common sep ~sync (obj: obj) (msg: message) =
+let wire_name_common sep ~sync_ty (obj: obj) (msg: message) =
   let sync_name = obj.name ^ sep ^ msg.msg_name in
-  if sync
-  then sync_name
-  else "Async" ^ sep ^ sync_name
+  match sync_ty with
+  | Sync -> sync_name
+  | Async -> Printf.sprintf "Async%s%s" sep sync_name
 
 let wire_name = wire_name_common "."
 let alternative_wire_name = wire_name_common "_"
