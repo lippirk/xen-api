@@ -95,14 +95,10 @@ let check_live ~__context h =
   && (not (Xapi_vm_helpers.is_host_live ~__context h))
   then raise (Api_errors.Server_error (Api_errors.host_offline, [Ref.string_of h]))
 
-(* Forward op to one of the specified hosts if host!=localhost *)
-let do_op_on_common ~local_fn ~__context ~host op f =
+let do_op_on_no_localhost_common ~__context ~host op f =
   try
-    let localhost=Helpers.get_localhost ~__context in
-    if localhost=host then local_fn ~__context
-    else
-      let task_opt = set_forwarding_on_task ~__context ~host in
-      f __context host task_opt op
+    let task_opt = set_forwarding_on_task ~__context ~host in
+    f __context host task_opt op
   with
   | Xmlrpc_client.Connection_reset | Http_client.Http_request_rejected _ ->
     warn "Caught Connection_reset when contacting host %s; converting into CANNOT_CONTACT_HOST" (Ref.string_of host);
@@ -110,6 +106,17 @@ let do_op_on_common ~local_fn ~__context ~host op f =
   | Xmlrpc_client.Stunnel_connection_failed ->
     warn "Caught Stunnel_connection_failed while contacting host %s; converting into CANNOT_CONTACT_HOST" (Ref.string_of host);
     raise (Api_errors.Server_error (Api_errors.cannot_contact_host, [Ref.string_of host]))
+
+(* Forward op to one of the specified hosts if host!=localhost *)
+let do_op_on_common ~local_fn ~__context ~host op f =
+  let localhost=Helpers.get_localhost ~__context in
+  if localhost=host then local_fn ~__context
+  else do_op_on_no_localhost_common ~__context ~host op f
+
+let do_op_on_no_localhost ~__context ~host op =
+  check_live ~__context host;
+  do_op_on_no_localhost_common ~__context ~host op
+    (call_slave_with_session remote_rpc_retry)
 
 (* regular forwarding fn, with session and live-check. Used by most calls, will
    use the connection cache. *)
@@ -1691,7 +1698,19 @@ module Forward = functor(Local: Custom_actions.CUSTOM_ACTIONS) -> struct
             fun ~local_fn ~__context ~vm op ->
               finally
                 (fun () -> allocate_vm_to_host ~__context ~vm ~host ~snapshot ~host_op:`vm_migrate ();
-                           forward_vm_op ~local_fn ~__context ~vm op)
+                           let internal_async_op ~__context =
+                             do_op_on_no_localhost ~__context ~host (fun session_id rpc ->
+                               Client.InternalAsync.VM.migrate_send rpc session_id vm dest live vdi_map vif_map options vgpu_map
+                             )
+                           in
+                           let remote_fn session_id rpc =
+                             Helpers.try_internal_async ~__context
+                                                        "InternalAsync.VM.migrate_send"
+                                                        internal_async_op
+                                                        (fun () -> op session_id rpc)
+                                                        API.ref_VM_of_rpc
+                           in
+                           forward_vm_op ~local_fn ~__context ~vm remote_fn)
                 clear_migrate_op;
           else
             (* Cross pool: just forward to the source host. Resources on the
@@ -1706,14 +1725,8 @@ module Forward = functor(Local: Custom_actions.CUSTOM_ACTIONS) -> struct
            Server_helpers.exec_with_subtask ~__context "VM.assert_can_migrate" (fun ~__context ->
                assert_can_migrate ~__context ~vm ~dest ~live ~vdi_map ~vif_map ~vgpu_map ~options
              );
-
-           Helpers.try_internal_async
-             ~__context
-             "InternalAsync.VM.migrate_send"
-             (forwarder ~local_fn ~vm)
-             (fun rpc session_id -> Client.InternalAsync.VM.migrate_send rpc session_id vm dest live vdi_map vif_map options vgpu_map)
-             (fun rpc session_id -> Client.VM.migrate_send rpc session_id vm dest live vdi_map vif_map options vgpu_map)
-             API.ref_VM_of_rpc
+           forwarder ~local_fn ~__context ~vm
+             (fun session_id rpc -> Client.VM.migrate_send rpc session_id vm dest live vdi_map vif_map options vgpu_map)
         )
 
     let send_trigger ~__context ~vm ~trigger =
