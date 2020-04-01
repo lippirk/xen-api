@@ -147,7 +147,9 @@ let do_dispatch ?session_id ?forward_op ?self supports_async called_fn_name op_f
     | `Sync          -> sync ()
     | `Async         -> let need_complete = not (Context.forwarded_task __context) in
                         async ~need_complete
-    | `InternalAsync -> async ~need_complete:true (* regardless of forwarding, we are expected to complete the task *)
+    | `InternalAsync ->
+      D.error "DEBUG: received InternalAsync task: %s" label;
+      async ~need_complete:true (* regardless of forwarding, we are expected to complete the task *)
 
 (* in the following functions, it is our responsibility to complete any tasks we create *)
 let exec_with_new_task ?http_other_config ?quiet ?subtask_of ?session_id ?task_in_database ?task_description ?origin task_name f =
