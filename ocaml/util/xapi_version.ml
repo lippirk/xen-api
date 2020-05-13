@@ -9,5 +9,11 @@
 let git_id = ""
 let hostname = "localhost"
 let date = Build_info.date
-let xapi_version_major = 1
-let xapi_version_minor = 20
+
+let (xapi_version_major, xapi_version_minor) =
+  let v = "%%VERSION_NUM%%" in
+  try
+    Scanf.sscanf v "%d.%d.%s" (fun maj min _rest -> (maj, min))
+  with _ -> (* this most likely means we are building locally, and dune subst hasn't been executed *)
+    failwith (Printf.sprintf "got %s" v)
+    (* (0, 0) *)

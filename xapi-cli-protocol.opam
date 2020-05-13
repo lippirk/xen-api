@@ -4,7 +4,10 @@ authors: [ "xen-api@lists.xen.org" ]
 homepage: "https://github.com/xapi-project/xen-api"
 bug-reports: "https://github.com/xapi-project/xen-api/issues"
 dev-repo: "git+https://github.com/xapi-project/xen-api.git"
-build: [[ "dune" "build" "-p" name ]]
+build: [
+  [ "dune" "subst" ] {pinned}
+  [ "dune" "build" "-p" name ]
+]
 
 depends: [
   "ocaml"

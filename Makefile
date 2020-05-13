@@ -3,8 +3,9 @@ include config.mk
 XAPIDOC=_build/install/default/xapi/doc
 JOBS = $(shell getconf _NPROCESSORS_ONLN)
 PROFILE=release
+VERSION_NUM=$(git describe --always --dirty)
 
-.PHONY: build clean test doc python reindent install uninstall
+.PHONY: build clean test doc python reindent install uninstall version
 
 build:
 	dune build @install -j $(JOBS) --profile=$(PROFILE)
@@ -40,7 +41,11 @@ doc-json:
 reindent:
 	git ls-files '*.ml*' '**/*.ml*' | xargs ocp-indent --syntax cstruct -i
 
+version:
+	find . -type f -name "*.ml" -exec sed -i "s/%%VERSION_NUM%%/$(VERSION_NUM)/g"
+
 install: build doc
+	dune subst
 	mkdir -p $(DESTDIR)$(SBINDIR)
 	mkdir -p $(DESTDIR)$(OPTDIR)/bin
 	mkdir -p $(DESTDIR)$(LIBEXECDIR)
