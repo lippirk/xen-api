@@ -9,5 +9,9 @@
 let git_id = ""
 let hostname = "localhost"
 let date = Build_info.date
-let xapi_version_major = 1
-let xapi_version_minor = 20
+let (xapi_version_major, xapi_version_minor) =
+  try
+    Scanf.sscanf Build_info.version "%d.%d.%s" (fun maj min _rest -> (maj, min))
+  with _ ->
+    (* Build_info is auto-generated, so check gen_build_info_ml.sh *)
+    failwith (Printf.sprintf "Invalid xapi version: %s" Build_info.version)
