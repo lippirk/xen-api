@@ -18,7 +18,7 @@
     (:x jsapi.exe)
     (source_tree templates)
   )
-  (package xapi-datamodel)
+  (package xapi)
   (action (run %{x}))
 )
 
@@ -28,6 +28,6 @@
     (:x jsapi.exe)
     (source_tree templates)
   )
-  (package xapi-datamodel)
+  (package xapi)
   (action (run %{x}))
 )

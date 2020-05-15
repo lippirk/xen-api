@@ -1,6 +1,5 @@
 (library
   (name xapi_datamodel)
-  (public_name xapi-datamodel)
   (modules
    datamodel
    datamodel_common

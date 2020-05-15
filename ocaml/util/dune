@@ -5,7 +5,6 @@
 
 (library
   (name xapi_version)
-  (public_name xapi-consts.xapi_version)
   (modules
    xapi_version
    build_info

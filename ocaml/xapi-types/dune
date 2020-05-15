@@ -6,7 +6,6 @@
 
 (library
   (name xapi_types)
-  (public_name xapi-types)
   (flags (:standard))
   (libraries
    astring

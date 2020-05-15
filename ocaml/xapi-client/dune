@@ -6,7 +6,6 @@
 
 (library
   (name xapi_client)
-  (public_name xapi-client)
   (libraries
    mtime
    mtime.clock.os
