@@ -5,7 +5,7 @@ homepage: "https://github.com/xapi-project/xen-api"
 bug-reports: "https://github.com/xapi-project/xen-api/issues"
 dev-repo: "git+https://github.com/xapi-project/xen-api.git"
 build: [
-  ["dune" "subst"] {pinned}
+  ["dune" "subst"]
   ["dune" "build" "-p" name]
   ["dune" "runtest" "-p" name "-j" jobs] {with-test}
 ]
