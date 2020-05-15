@@ -9,9 +9,19 @@
 let git_id = ""
 let hostname = "localhost"
 let date = Build_info.date
+
 let (xapi_version_major, xapi_version_minor) =
-  try
-    Scanf.sscanf Build_info.version "%d.%d.%s" (fun maj min _rest -> (maj, min))
-  with _ ->
-    (* Build_info is auto-generated, so check gen_build_info_ml.sh *)
-    failwith (Printf.sprintf "Invalid xapi version: %s" Build_info.version)
+  let version_of_string v =
+    try
+      Scanf.sscanf v "%d.%d.%s" (fun maj min _rest -> Some (maj, min))
+    with _ ->
+      None
+  in
+  let env_version = version_of_string Build_info.version in (* derived from XAPI_VERSION env var *)
+  let opam_version = version_of_string "%%VERSION_NUM%%" in
+  match (env_version, opam_version) with
+  | (Some ((maj, min)), None) | (None, Some ((maj, min))) -> (maj, min)
+  | (None, None)                                          -> failwith "Cannot determine xapi version"
+  | (Some (e_maj, e_min), Some (o_maj, o_min))            ->
+      (* did you call dune subst when building with make? *)
+      failwith (Printf.sprintf "Didn't expect two xapi versions - (%d,%d) and (%d,%d)" e_maj e_min o_maj o_min)
