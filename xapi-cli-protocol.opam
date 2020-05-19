@@ -4,7 +4,9 @@ maintainer: "xen-api@lists.xen.org"
 authors: [ "xen-api@lists.xen.org" ]
 homepage: "https://github.com/xapi-project/xen-api"
 bug-reports: "https://github.com/xapi-project/xen-api/issues"
-build-env: ["XAPI_VERSION=0.0.0"]
+build-env: [
+  [XAPI_VERSION = "v1.222.0"]
+]
 dev-repo: "git+https://github.com/xapi-project/xen-api.git"
 build: [
   [ "dune" "subst" ] {pinned}
