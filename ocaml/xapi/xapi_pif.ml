@@ -960,7 +960,16 @@ let start_of_day_best_effort_bring_up () =
               (Printf.sprintf "error trying to bring up pif: %s" pifr.API.pIF_uuid)
               (fun pif ->
                  debug "Best effort attempt to bring up PIF: %s" pifr.API.pIF_uuid;
-                 plug ~__context ~self:pif)
+                 try
+                   plug ~__context ~self:pif
+                 with
+                 | Api_errors.Server_error(code, _) as e when code = Api_errors.pif_configuration_error ->
+                   if pifr.API.pIF_managed && pifr.API.pIF_currently_attached then (
+                     warn "PIF's interface didn't exist - marking as not attached: PIF = %s" (Ref.string_of pif);
+                     Db.PIF.set_currently_attached ~__context ~self:pif ~value:false
+                   );
+                   raise e
+              )
               (pif))
          (calculate_pifs_required_at_start_of_day ~__context))
 
