@@ -153,6 +153,11 @@ let do_dispatch ?session_id ?forward_op ?self supports_async called_fn_name
       Context.of_http_req ?session_id ~internal_async_subtask ~generate_task_for
         ~supports_async ~label ~http_req ~fd
     in
+    let assign_task_to_us () =
+      let task = Context.get_task_id __context in
+      Db.Task.set_resident_on ~__context ~self:task ~value:!Xapi_globs.localhost_ref;
+    in
+    assign_task_to_us ();
     let sync () =
       let need_complete = not (Context.forwarded_task __context) in
       exec_with_context ~__context ~need_complete ~called_async
