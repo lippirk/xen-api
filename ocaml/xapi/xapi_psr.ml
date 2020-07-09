@@ -339,6 +339,18 @@ let start ~__context =
      * HA disabled
      * RPU not running
      * all hosts in pool 'alive' *)
+  let assert_another_hosts_psr_not_in_progress () =
+    let do_backups_exist = List.for_all Sys.file_exists [old_pool_secret_backup_path; new_pool_secret_backup_path] in
+    let does_checkpoint_exist = Sys.file_exists checkpoint_path in
+    match do_backups_exist, does_checkpoint_exist with
+    | true, true | false, false -> ()
+    | true, false ->
+      let msg = "Found state from an older attempt to rotate the pool secret, aborting..." in
+      raise Api_errors.(Server_error (internal_error, [msg]))
+    | false, true ->
+      let msg = "Found corrupt pool secret rotation state, aborting..." in
+      raise Api_errors.(Server_error (internal_error, [msg]))
+  in
   let f () =
     if
       not
@@ -348,6 +360,7 @@ let start ~__context =
       raise
         Api_errors.(
           Server_error (host_is_slave, [Pool_role.get_master_address ()])) ;
+    assert_another_hosts_psr_not_in_progress ();
     let live_hosts = Helpers.get_live_hosts ~__context |> HostSet.of_list in
     let all_hosts_list = Xapi_pool_helpers.get_master_slaves_list ~__context in
     let all_hosts = all_hosts_list |> HostSet.of_list in
