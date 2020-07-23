@@ -40,6 +40,8 @@ let xedebug = ref false
 
 let xedebugonfail = ref false
 
+let stunnel_processes = ref []
+
 let debug_channel = ref None
 
 let debug_file = ref None
@@ -299,18 +301,11 @@ let with_open_tcp_ssl server f =
     ~write_to_log:(fun x -> debug "stunnel: %s\n%!" x)
     ~extended_diagnosis:(!debug_file <> None) server port
   @@ fun x ->
-  Pervasiveext.finally
-    (fun () -> Unixfd.with_channels x.Stunnel.fd f)
-    (fun () ->
-      if Sys.file_exists x.Stunnel.logfile then (
-        if !exit_status <> 0 then (
-          debug "\nStunnel diagnosis:\n\n" ;
-          try Stunnel.diagnose_failure x
-          with e -> debug "%s\n" (Printexc.to_string e)
-        ) ;
-        try Unix.unlink x.Stunnel.logfile with _ -> ()
-      ) ;
-      Stunnel.disconnect ~wait:false ~force:true x)
+  let x = Stunnel.move_out_exn x in
+  let ic = Unix.in_channel_of_descr (Unix.dup Unixfd.(!(x.Stunnel.fd))) in
+  let oc = Unix.out_channel_of_descr (Unix.dup Unixfd.(!(x.Stunnel.fd))) in
+  stunnel_processes := (x, ic, oc) :: !stunnel_processes ;
+  f (ic, oc)
 
 let with_open_tcp server f =
   if !xeusessl && not (is_localhost server) then (* never use SSL on-host *)
@@ -610,9 +605,7 @@ let main_loop ifd ofd permitted_filenames =
           try
             with_open_tcp server @@ fun (ic, oc) ->
             delay := 0.1 ;
-            Pervasiveext.finally
-              (fun () -> connection ic oc)
-              (fun () -> try close_in ic with _ -> ())
+            connection ic oc
           with
           | Unix.Unix_error (_, _, _)
             when !delay <= long_connection_retry_timeout ->
@@ -670,7 +663,10 @@ let main_loop ifd ofd permitted_filenames =
             | 302 ->
                 let newloc = List.assoc "location" headers in
                 (try close_in ic with _ -> ()) ;
-                (* Nb. Unix.close_connection only requires the in_channel *)
+                (* Unixfd.with_connection requires both channels to be closed *)
+                close_in_noerr ic ;
+                close_out_noerr oc ;
+                (* recursive call here, had to close channels on our own *)
                 doit newloc
             | _ ->
                 failwith "Unhandled response code"
@@ -717,15 +713,12 @@ let main_loop ifd ofd permitted_filenames =
                 (fun () ->
                   copy_with_heartbeat ic file_ch heartbeat_fun ;
                   marshal ofd (Response OK))
-                (fun () ->
-                  (try close_in ic with _ -> ()) ;
-                  try close_out file_ch with _ -> ())
+                (fun () -> try close_out file_ch with _ -> ())
           | 302 ->
               let headers = read_rest_of_headers ic in
               let newloc = List.assoc "location" headers in
-              (try close_in ic with _ -> ()) ;
-              (* Nb. Unix.close_connection only requires the in_channel *)
-              doit newloc
+              (* see above about Unixfd.with_connection *)
+              close_in_noerr ic ; close_out_noerr oc ; doit newloc
           | _ ->
               failwith "Unhandled response code"
         in
@@ -831,6 +824,20 @@ let main () =
     | e ->
         error "Unhandled exception\n%s\n" (Printexc.to_string e)
   in
+  List.iter
+    (fun (x, ic, oc) ->
+      close_out_noerr oc ;
+      close_in_noerr ic ;
+      if Sys.file_exists x.Stunnel.logfile then (
+        if !exit_status <> 0 then (
+          debug "\nStunnel diagnosis:\n\n" ;
+          try Stunnel.diagnose_failure x
+          with e -> debug "%s\n" (Printexc.to_string e)
+        ) ;
+        try Unix.unlink x.Stunnel.logfile with _ -> ()
+      ) ;
+      Stunnel.disconnect ~wait:false ~force:true x)
+    !stunnel_processes ;
   ( match (!debug_file, !debug_channel) with
   | Some f, Some ch -> (
       close_out ch ;
