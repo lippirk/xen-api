@@ -857,7 +857,7 @@ let host_query_ha = call ~flags:[`Session]
       ~in_product_since:rel_cowley
       ~params:[Ref _host, "host", "The host whose clock should be queried"]
       ~doc:"This call queries the host's clock for the current time in the host's local timezone"
-      ~result:(DateTime, "The current local time")
+      ~result:(String, "The current local time")
       ~allowed_roles:_R_READ_ONLY
       ()
 
