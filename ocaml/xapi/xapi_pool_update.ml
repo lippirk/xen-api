@@ -98,8 +98,27 @@ let updates_to_attach_count_tbl : (string, int) Hashtbl.t = Hashtbl.create 10
 
 let updates_to_attach_count_tbl_mutex = Mutex.create ()
 
+let get_update_vbds ~__context ~vdi =
+  let dom0 = Helpers.get_domain_zero ~__context in
+  Db.VDI.get_VBDs ~__context ~self:vdi
+  |> List.filter (fun self -> Db.VBD.get_VM ~__context ~self = dom0)
+
+let assert_update_vbds_attached ~__context ~vdi =
+  let vbds = get_update_vbds ~__context ~vdi in
+  List.iter
+    (fun self ->
+      if not (Db.VBD.get_currently_attached ~__context ~self) then
+        let msg =
+          Printf.sprintf
+            "pool_update: expected VBD='%s' to be attached but it isn't!"
+            (Ref.string_of self)
+        in
+        raise Api_errors.(Server_error (internal_error, [msg])))
+    vbds
+
 let with_dec_refcount ~__context ~uuid ~vdi f =
   Mutex.execute updates_to_attach_count_tbl_mutex (fun () ->
+      assert_update_vbds_attached ~__context ~vdi ;
       let count =
         try Hashtbl.find updates_to_attach_count_tbl uuid with _ -> 0
       in
@@ -119,6 +138,7 @@ let with_inc_refcount ~__context ~uuid ~vdi f =
       debug "pool_update.attach_helper refcount='%d'" count ;
       if count = 0 then
         f ~__context ~uuid ~vdi ;
+      assert_update_vbds_attached ~__context ~vdi ;
       Hashtbl.replace updates_to_attach_count_tbl uuid (count + 1))
 
 let get_locally_attached ~__context ~uuid ~vdi =
@@ -146,15 +166,12 @@ let detach_helper ~__context ~uuid ~vdi =
           ("detach_helper: unmounting " ^ mount_point)
           (fun () -> umount mount_point)
           () ;
+      let vbds = get_update_vbds ~__context ~vdi in
       Helpers.call_api_functions ~__context (fun rpc session_id ->
-          let dom0 = Helpers.get_domain_zero ~__context in
-          let vbds = Client.VDI.get_VBDs ~rpc ~session_id ~self:vdi in
           List.iter
             (fun self ->
-              if Client.VBD.get_VM ~rpc ~session_id ~self = dom0 then (
-                Client.VBD.unplug ~rpc ~session_id ~self ;
-                Client.VBD.destroy ~rpc ~session_id ~self
-              ))
+              Client.VBD.unplug ~rpc ~session_id ~self ;
+              Client.VBD.destroy ~rpc ~session_id ~self)
             vbds) ;
       if try Sys.is_directory mount_point_parent_dir with _ -> false then (
         Helpers.log_exn_continue
