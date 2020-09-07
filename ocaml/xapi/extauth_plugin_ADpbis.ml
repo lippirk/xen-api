@@ -734,83 +734,93 @@ module AuthADlw : Auth_signature.AUTH_MODULE = struct
     In addition, there are some event hooks that auth modules implement as follows:
 *)
 
-  let _is_pbis_server_available max =
-    let username = "KRBTGT" in
-    (* domain name prefix automatically added by our internal AD plugin functions *)
-    let rec test i =
-      (* let's test this many times *)
-      if i > max then
-        false (* we give up *)
-      else
-        (* let's test *)
-
-        (* (1) we _need_ to use a username contained in our domain, otherwise test (2) doesn't work *)
-        (* Microsoft KB/Q243330 article provides the KRBTGT account as a well-known built-in SID in AD *)
-        (* Microsoft KB/Q229909 article says that KRBTGT account cannot be renamed or enabled, making *)
-        (* it the perfect target for such a test using a username (Administrator account can be renamed). *)
-        try
-          let username = "KRBTGT" in
-          (* domain name prefix automatically added by our internal AD plugin functions *)
-          let sid = get_subject_identifier username in
-          (* use our well-known KRBTGT builtin username in AD *)
-          (* OK, we found this username! *)
-          debug
-            "Request %i/%i to external authentication server successful: user \
-             %s was found"
-            i max username ;
-          (* (2) CA-25427: test (1) above may succeed (because of pbis caching stale AD information) *)
-          (* even though the AD domain is offline (error 32888), usually because /etc/resolv.conf is not *)
-          (* pointing to the AD server. This test should catch if the domain is offline by calling find-by-sid *)
-          (* using a domain SID. We must use a _domain_ SID. A universal SID like S-1-1-0 doesn't work for this test. *)
-          let (_ : (string * string) list) = query_subject_information sid in
-          (* use KRBTGT's domain SID *)
-          debug
-            "Request %i/%i to external authentication server successful: sid \
-             %s was found"
-            i max sid ;
-          true
+  let _is_pbis_server_available max_tries =
+    (* we _need_ to use a username contained in our domain, otherwise the following tests won't work.
+       Microsoft KB/Q243330 article provides the KRBTGT account as a well-known built-in SID in AD
+       Microsoft KB/Q229909 article says that KRBTGT account cannot be renamed or enabled, making
+       it the perfect target for such a test using a username (Administrator account can be renamed) *)
+    let krbtgt = "KRBTGT" in
+    let can_clear_cache () =
+      match get_full_subject_name krbtgt with
+      | exception e ->
+          info "_is_pbis_server_available: failed to get full subject name" ;
+          false
+      | full_username -> (
+        match
+          ignore
+            (pbis_common "/opt/pbis/bin/ad-cache"
+               ["--delete-user"; "--name"; full_username])
         with
-        | Not_found ->
-            (* that means that pbis is responding to at least cached subject queries. *)
-            (* in this case, KRBTGT wasn't found in the AD domain. this usually indicates that the *)
-            (* AD domain is offline/inaccessible to pbis, which will cause problems, specially *)
-            (* to the ssh python hook-script, so we need to try again until KRBTGT is found, indicating *)
-            (* that the domain is online and accessible to pbis queries *)
-            debug
-              "Request %i/%i to external authentication server returned KRBTGT \
-               Not_found, waiting 5 secs to try again"
-              i max ;
-            Thread.delay 5.0 ;
-            (*wait 5 seconds*)
-            (* try again *)
-            test (i + 1)
-        | e ->
-            (* ERROR: anything else means that the server is NOT responding adequately *)
-            debug
-              "Request %i/%i to external authentication server failed, waiting \
-               5 secs to try again: %s"
-              i max
+        | () ->
+            true
+        | exception Not_found ->
+            true
+        | exception e ->
+            debug "Failed to remove user %s from cache: %s" full_username
               (ExnHelper.string_of_exn e) ;
-            Thread.delay 5.0 ;
-            (*wait 5 seconds*)
-            (* try again *)
-            test (i + 1)
+            false
+      )
     in
-    debug "Testing if external authentication server is accepting requests..." ;
-    let full_username = get_full_subject_name username in
-    ( try
-        ignore
-          (pbis_common "/opt/pbis/bin/ad-cache"
-             ["--delete-user"; "--name"; full_username])
+    let can_fetch_sid () =
+      try
+        let sid = get_subject_identifier krbtgt in
+        debug
+          "Request to external authentication server successful: user %s was \
+           found"
+          krbtgt ;
+        let (_ : (string * string) list) = query_subject_information sid in
+        debug
+          "Request to external authentication server successful: sid %s was \
+           found"
+          sid ;
+        true
       with
-    | Not_found ->
-        ()
-    | e ->
-        debug "Failed to remove user %s from cache: %s" full_username
-          (ExnHelper.string_of_exn e) ;
-        raise e
-    ) ;
-    test 0
+      | Not_found ->
+          (* that means that pbis is responding to at least cached subject queries.
+             in this case, KRBTGT wasn't found in the AD domain. this usually indicates that the
+             AD domain is offline/inaccessible to pbis, which will cause problems, specially
+             to the ssh python hook-script, so we need to try again until KRBTGT is found, indicating
+             that the domain is online and accessible to pbis queries *)
+          debug
+            "Request to external authentication server returned KRBTGT \
+             Not_found" ;
+          false
+      | e ->
+          debug
+            "Request to external authentication server failed for reason: %s"
+            (ExnHelper.string_of_exn e) ;
+          false
+    in
+    (* in order to properly test that PBIS and the AD domain
+       are running correctly, we first remove KRBTGT from the
+       cache. if we didn't, then in the case that PBIS is running
+       and the AD domain is offline, [ can_fetch_sid ] will
+       erroneously return success *)
+    let rec check = function
+      | `clear_cache ->
+          if can_clear_cache () then
+            (check [@tailcall]) `fetch_sid
+          else
+            Error `clear_cache
+      | `fetch_sid ->
+          if can_fetch_sid () then Ok () else Error `fetch_sid
+    in
+    let rec go x i =
+      debug
+        "Testing if external authentication server is accepting requests... \
+         attempt %i of %i"
+        i max_tries ;
+      if i > max_tries then
+        false
+      else
+        match check x with
+        | Error e ->
+            Thread.delay 5.0 ;
+            (go [@tailcall]) e (i + 1)
+        | Ok () ->
+            true
+    in
+    go `clear_cache 0
 
   let is_pbis_server_available max =
     Locking_helpers.Named_mutex.execute mutex_check_availability (fun () ->
