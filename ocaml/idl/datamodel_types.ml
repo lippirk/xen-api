@@ -273,7 +273,7 @@ let release_order_full = [{
      code_name     = Some rel_stockholm_psr;
      version_major = 2;
      version_minor = 15;
-     branding      = "Citrix Hypervisor 8.2 Hotfix n";
+     branding      = "Citrix Hypervisor 8.2 Hotfix 2";
      release_date  = None;
    }
   ]
