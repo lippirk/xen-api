@@ -504,9 +504,7 @@ let start =
           (Helpers.is_pool_master ~__context
              ~host:(Helpers.get_localhost ~__context))
       then
-        raise
-          Api_errors.(
-            Server_error (host_is_slave, [Pool_role.get_master_address ()]))
+        Helpers.raise_host_is_slave ~__context
     in
     let assert_all_hosts_alive () =
       let live_hosts = Helpers.get_live_hosts ~__context |> HostSet.of_list in

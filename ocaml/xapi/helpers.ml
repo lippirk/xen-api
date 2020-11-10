@@ -1869,3 +1869,9 @@ end = struct
     SecretString.write_to_file !Xapi_globs.pool_secret_path ps ;
     Xapi_psr_util.load_psr_pool_secrets ()
 end
+
+let raise_host_is_slave ~__context =
+  let master = Db.Pool.get_master ~__context ~self:(Db.Pool.get_all ~__context |> List.hd) in
+  let address = Db.Host.get_address ~__context ~self:master in
+  let hostname = Db.Host.get_hostname ~__context ~self:master in
+  raise Api_errors.(Server_error (host_is_slave, [address; hostname]))

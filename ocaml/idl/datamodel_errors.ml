@@ -931,7 +931,7 @@ let _ =
 
   (* Pool errors *)
 
-  error Api_errors.host_is_slave ["Master IP address"]
+  error Api_errors.host_is_slave ["Master IP address"; "Master hostname"]
     ~doc:"You cannot make regular API calls directly on a slave. Please pass API calls via the master host." ();
 
 

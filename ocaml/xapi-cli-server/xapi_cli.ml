@@ -53,10 +53,12 @@ let is_unix_socket s =
 
 let forward args s session =
   (* Reject forwarding cli commands if the request came in from a tcp socket *)
-  if not (is_unix_socket s) then
-    raise
-      (Api_errors.Server_error
-         (Api_errors.host_is_slave, [Pool_role.get_master_address ()])) ;
+  if not (is_unix_socket s) then (
+    let raise_host_is_slave = 
+      
+
+    raise_host_is_slave () 
+  ) ;
   let open Xmlrpc_client in
   let transport =
     SSL (SSL.make (), Pool_role.get_master_address (), !Constants.https_port)

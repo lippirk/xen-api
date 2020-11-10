@@ -25,8 +25,7 @@ open D
 (** The role of this node *)
 type t =
   | Master
-  | Slave of string
-  (* IP address *)
+  | Slave of string * string option
   | Broken
 
 let role = ref None
@@ -47,8 +46,8 @@ let is_unit_test () = with_pool_role_lock (fun _ -> !role_unit_tests)
 let string_of = function
   | Master ->
       "master"
-  | Slave x ->
-      "slave:" ^ x
+  | Slave (ip, hostname) ->
+      hostname |> Option.fold ~none:"" ~some:(Printf.sprintf " %s") |> Printf.sprintf "slave: %s%s" ip
   | Broken ->
       "broken"
 
@@ -57,16 +56,21 @@ let read_pool_role () =
     let s =
       Astring.String.trim (Unixext.string_of_file !Constants.pool_config_file)
     in
-    match Astring.String.cuts ~sep:":" s with
-    | ["master"] ->
-        Master
-    | "slave" :: m_ip ->
-        Slave (String.concat ":" m_ip)
-    | ["broken"] ->
-        Broken
-    | _ ->
+    let fail ()  = 
         failwith
           (Printf.sprintf "cannot parse pool_role '%s' from pool config file" s)
+    in
+    match Astring.String.cuts ~sep:"slave:" s with
+    | ["master"] ->
+        Master
+    | [""; rest] ->
+        (match Astring.String.cuts ~sep:" " rest with   
+        | [ip; hostname] -> Slave (ip, Some hostname)
+        | [ip] -> Slave (ip, None)
+        | _ -> fail ())
+    | ["broken"] ->
+        Broken
+    | _ -> fail ()
   with _ ->
     (* If exec name is suite.opt, we're running as unit tests *)
     if "xapi" <> Filename.basename Sys.executable_name then (
@@ -101,9 +105,16 @@ exception This_host_is_broken
 
 let get_master_address () =
   match get_role () with
-  | Slave ip ->
+  | Slave (ip, _) ->
       ip
   | Master ->
       raise This_host_is_a_master
   | Broken ->
       raise This_host_is_broken
+
+let host_is_slave_params () =
+  match get_role () with
+  | Slave (ip, mhostname) ->
+      Option.fold ~none:[ip] ~some:(fun hostname -> [ip; hostname])
+  | Master -> raise This_host_is_a_master
+  | Broken -> raise This_host_is_broken

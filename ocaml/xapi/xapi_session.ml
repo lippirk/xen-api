@@ -486,9 +486,7 @@ let login_with_password ~__context ~uname ~pwd ~version ~originator =
       else
         let () =
           if Pool_role.is_slave () then
-            raise
-              (Api_errors.Server_error
-                 (Api_errors.host_is_slave, [Pool_role.get_master_address ()]))
+            Helpers.raise_host_is_slave ~__context
         in
         let login_as_local_superuser auth_type =
           if auth_type <> "" && uname <> local_superuser then

@@ -63,15 +63,7 @@ let check ~intra_pool_only ~session_id =
             raise
               (Api_errors.Server_error (Api_errors.session_invalid, [reference]))
         | Non_master_login_on_slave ->
-            let master =
-              Db_actions.DB_Action.Pool.get_master ~__context
-                ~self:(List.hd (Db_actions.DB_Action.Pool.get_all ~__context))
-            in
-            let address =
-              Db_actions.DB_Action.Host.get_address ~__context ~self:master
-            in
-            raise
-              (Api_errors.Server_error (Api_errors.host_is_slave, [address]))
+            Helpers.raise_host_is_slave ~__context
         | Api_errors.Server_error (code, params) as e ->
             debug "Session check failed: unexpected exception %s %s" code
               (String.concat " " params) ;
