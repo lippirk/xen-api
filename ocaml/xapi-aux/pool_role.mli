@@ -12,7 +12,11 @@
  * GNU Lesser General Public License for more details.
  *)
 
-type t = Master | Slave of string  (** IP address *) | Broken
+type t =
+  | Master
+  | Slave of string * string option
+  (* (ip, fqdn) *)
+  | Broken
 
 val with_pool_role_lock : (unit -> unit) -> unit
 

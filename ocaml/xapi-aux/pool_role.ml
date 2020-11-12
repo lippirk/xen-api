@@ -25,9 +25,64 @@ open D
 (** The role of this node *)
 type t =
   | Master
-  | Slave of string
-  (* IP address *)
+  | Slave of string * string option
+  (* (ip, fqdn) *)
   | Broken
+
+module T : sig
+  val string_of : t -> string
+
+  val of_string : string -> t option
+end = struct
+  open Angstrom
+
+  let is_ws = function
+    | ' ' ->
+        true
+    | '\t' ->
+        true
+    | '\n' ->
+        true
+    | '\r' ->
+        true
+    | _ ->
+        false
+
+  let is_not_ws x = is_ws x |> not
+
+  let ip_str =
+    take_while is_not_ws >>= fun ip ->
+    match Ipaddr.of_string ip with
+    | Error _ ->
+        Printf.sprintf "pool_role.ml: cannot parse ip: %s" ip |> fail
+    | Ok _ ->
+        return ip
+
+  let broken = string "broken" <* end_of_input >>| fun _ -> Broken
+
+  let master = string "master" <* end_of_input >>| fun _ -> Master
+
+  let slave =
+    string "slave:" *> ip_str >>= fun ip ->
+    end_of_input *> return (Slave (ip, None))
+    <|> ( char ' ' *> take_while is_not_ws >>= fun hostname ->
+          end_of_input *> return (Slave (ip, Some hostname)) )
+
+  let of_string x =
+    parse_string (master <|> broken <|> slave) x |> Stdlib.Result.to_option
+
+  let string_of = function
+    | Master ->
+        "master"
+    | Broken ->
+        "broken"
+    | Slave (ip, None) ->
+        Printf.sprintf "slave:%s" ip
+    | Slave (ip, Some fqdn) ->
+        Printf.sprintf "slave:%s %s" ip fqdn
+end
+
+let string_of = T.string_of
 
 let role = ref None
 
@@ -44,29 +99,11 @@ let set_pool_role_for_test () =
 
 let is_unit_test () = with_pool_role_lock (fun _ -> !role_unit_tests)
 
-let string_of = function
-  | Master ->
-      "master"
-  | Slave x ->
-      "slave:" ^ x
-  | Broken ->
-      "broken"
-
 let read_pool_role () =
   try
-    let s =
-      Astring.String.trim (Unixext.string_of_file !Constants.pool_config_file)
-    in
-    match Astring.String.cuts ~sep:":" s with
-    | ["master"] ->
-        Master
-    | "slave" :: m_ip ->
-        Slave (String.concat ":" m_ip)
-    | ["broken"] ->
-        Broken
-    | _ ->
-        failwith
-          (Printf.sprintf "cannot parse pool_role '%s' from pool config file" s)
+    Astring.String.trim (Unixext.string_of_file !Constants.pool_config_file)
+    |> T.of_string
+    |> Option.get
   with _ ->
     (* If exec name is suite.opt, we're running as unit tests *)
     if "xapi" <> Filename.basename Sys.executable_name then (
@@ -101,7 +138,7 @@ exception This_host_is_broken
 
 let get_master_address () =
   match get_role () with
-  | Slave ip ->
+  | Slave (ip, _) ->
       ip
   | Master ->
       raise This_host_is_a_master

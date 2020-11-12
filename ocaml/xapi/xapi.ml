@@ -212,6 +212,14 @@ let wait_to_die () =
     Thread.delay 20000.
   done
 
+let become_slave_in_conf ~__context master =
+  let ip = Db.Host.get_address ~self:master ~__context in
+  let mfqdn =
+    Db.Host.get_hostname ~__context ~self:master
+    |> Gencertlib.Lib.fqdn_of_hostname
+  in
+  Pool_role.Slave (ip, mfqdn) |> Xapi_pool_transition.set_role
+
 (* Go through hosts in db. If they're up then just check that no-one else thinks they're the master.
    If someone else thinks they're the master then we switch to a slave and restart. *)
 let check_no_other_masters () =
@@ -221,16 +229,15 @@ let check_no_other_masters () =
         try
           if not (Xapi_host.ask_host_if_it_is_a_slave ~__context ~host:href)
           then (
-            let master_address = Db.Host.get_address ~self:href ~__context in
             error
               "Detected another master in my database of known hosts. Aborting \
-               xapi startup and restarting as slave of host '%s' (%s)"
-              (Db.Host.get_uuid ~self:href ~__context)
-              master_address ;
+               xapi startup and restarting as slave of host '%s'"
+              (Db.Host.get_uuid ~self:href ~__context) ;
+
             (* transition to slave and restart *)
             ( try
                 (* now become a slave of the new master we found... *)
-                Xapi_pool_transition.set_role (Pool_role.Slave master_address)
+                become_slave_in_conf ~__context href
               with e ->
                 error
                   "Could not transition to slave '%s': xapi will abort \
@@ -357,7 +364,7 @@ let wait_for_management_ip_address ~__context =
   Xapi_host.set_emergency_mode_error Api_errors.host_still_booting [] ;
   (* Check whether I am my own slave. *)
   ( match Pool_role.get_role () with
-  | Pool_role.Slave masters_ip ->
+  | Pool_role.Slave (masters_ip, _) ->
       if masters_ip = "127.0.0.1" || masters_ip = ip then (
         debug "Realised that I am my own slave!" ;
         Xapi_host.set_emergency_mode_error Api_errors.host_its_own_slave []
@@ -558,6 +565,16 @@ let resynchronise_ha_state () =
     (* Critical that we don't continue as a master and use shared resources *)
     error "Caught exception resynchronising state of HA system: %s"
       (ExnHelper.string_of_exn e)
+
+let add_fqdn_to_pool_conf () =
+  (* if fqdn is not in the pool config file, add it *)
+  match Pool_role.get_role () with
+  | Slave (_, None) ->
+      Server_helpers.exec_with_new_task "Add fqdn to pool.conf"
+        (fun __context ->
+          Helpers.get_master ~__context |> become_slave_in_conf ~__context)
+  | _ ->
+      ()
 
 (** Reset the networking-related metadata for this host if the command [xe-reset-networking]
  *  was executed before the restart. *)
@@ -1058,7 +1075,8 @@ let server_init () =
       (fun __context ->
         Startup.run ~__context
           [
-            ("Checking emergency network reset", [], check_network_reset)
+            ("Add fqdn to pool.conf", [Startup.OnlySlave], add_fqdn_to_pool_conf)
+          ; ("Checking emergency network reset", [], check_network_reset)
           ; ( "Upgrade bonds to Boston"
             , [Startup.NoExnRaising]
             , Sync_networking.fix_bonds ~__context )

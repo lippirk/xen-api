@@ -2,8 +2,10 @@
  (name xapi_aux)
 
  (libraries
+   angstrom
    astring
    cstruct
+   ipaddr
    tar
    xapi-consts
    xapi-idl
