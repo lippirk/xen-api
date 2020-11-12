@@ -78,30 +78,64 @@ let local_failover_decisions_are_ok () =
   try not (bool_of_string (Localdb.get Constants.ha_disable_failover_decisions))
   with _ -> true
 
-(** Since the liveset info doesn't include the host IP address, we persist these ourselves *)
-let write_uuid_to_ip_mapping ~__context =
-  let table =
+(** Since the liveset info doesn't include the host IP address or fqdn, we persist these ourselves *)
+let write_uuid_to_host_mappings ~__context =
+  let hosts = Db.Host.get_all_records ~__context in
+  let ip_table =
     List.map
       (fun (_, host) -> (host.API.host_uuid, host.API.host_address))
-      (Db.Host.get_all_records ~__context)
+      hosts
   in
-  let v = String_marshall_helper.map (fun x -> x) (fun x -> x) table in
-  Localdb.put Constants.ha_peers v
+  let fqdn_table =
+    List.map
+      (fun (_, host) ->
+        let hostname = host.API.host_hostname in
+        match Gencertlib.Lib.fqdn_of_hostname hostname with
+        | None ->
+            raise
+              Api_errors.(
+                Server_error
+                  ( internal_error
+                  , [
+                      Printf.sprintf "cannot find fqdn of hostname='%s'" hostname
+                    ] ))
+        | Some fqdn ->
+            (host.API.host_address, fqdn))
+      hosts
+  in
+  String_marshall_helper.map (fun x -> x) (fun x -> x) ip_table
+  |> Localdb.put Constants.ha_peers ;
+  String_marshall_helper.map (fun x -> x) (fun x -> x) fqdn_table
+  |> Localdb.put Constants.ha_peers_fqdn
 
 (** Since the liveset info doesn't include the host IP address, we persist these ourselves *)
 let get_uuid_to_ip_mapping () =
   let v = Localdb.get Constants.ha_peers in
   String_unmarshall_helper.map (fun x -> x) (fun x -> x) v
 
-(** Without using the Pool's database, returns the IP address of a particular host
-    named by UUID. *)
+let get_ip_to_fqdn_mapping () =
+  let v = Localdb.get Constants.ha_peers_fqdn in
+  String_unmarshall_helper.map (fun x -> x) (fun x -> x) v
+
+(* Without using the Pool's database, returns the IP address a particular host *)
 let address_of_host_uuid uuid =
-  let table = get_uuid_to_ip_mapping () in
-  if not (List.mem_assoc uuid table) then (
-    error "Failed to find the IP address of host UUID %s" uuid ;
-    raise Not_found
-  ) else
-    List.assoc uuid table
+  let ip_table = get_uuid_to_ip_mapping () in
+  match List.assoc_opt uuid ip_table with
+  | None ->
+      error "Failed to find the fqdn of host UUID %s" uuid ;
+      raise Not_found
+  | Some x ->
+      x
+
+(* Without using the Pool's database, returns the fqdn address a particular host *)
+let fqdn_of_address ip =
+  let fqdn_table = get_ip_to_fqdn_mapping () in
+  match List.assoc_opt ip fqdn_table with
+  | None ->
+      error "Failed to find the fqdn of host IP %s" ip ;
+      raise Not_found
+  | Some x ->
+      x
 
 (** Without using the Pool's database, returns the UUID of a particular host named by
     heartbeat IP address. This is only necesary because the liveset info doesn't include
@@ -132,8 +166,10 @@ let on_master_failure () =
   in
   let become_slave_of uuid =
     let address = address_of_host_uuid uuid in
-    info "This node will become the slave of host %s (%s)" uuid address ;
-    Xapi_pool_transition.become_another_masters_slave address ;
+    let fqdn = fqdn_of_address address in
+    info "This node will become the slave of host %s (ip=%s, fqdn=%s)" uuid
+      address fqdn ;
+    Xapi_pool_transition.become_another_masters_slave address (Some fqdn) ;
     (* XXX CA-16388: prevent blocking *)
     Thread.delay 15. ;
     error "Failed to flush and exit properly; forcibly exiting" ;
@@ -1298,7 +1334,7 @@ let preconfigure_host __context localhost statevdis metadata_vdi generation =
     (* It's unnecessary to remember the path since this can be queried dynamically *)
     ignore (attach_metadata_vdi ~__context metadata_vdi)
   ) ;
-  write_uuid_to_ip_mapping ~__context ;
+  write_uuid_to_host_mappings ~__context ;
   let base_t = Timeouts.get_base_t ~__context in
   Localdb.put Constants.ha_base_t (string_of_int base_t)
 
@@ -1438,7 +1474,8 @@ let commit_new_master ~__context ~address =
       if Helpers.this_is_my_address ~__context address then
         Xapi_pool_transition.become_master ()
       else
-        Xapi_pool_transition.become_another_masters_slave address)
+        let fqdn = fqdn_of_address address in
+        Xapi_pool_transition.become_another_masters_slave address (Some fqdn))
 
 let abort_new_master ~__context ~address =
   Mutex.execute proposed_master_m (fun () ->

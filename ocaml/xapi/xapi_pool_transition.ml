@@ -198,7 +198,7 @@ let attempt_two_phase_commit_of_new_master ~__context (manual : bool)
     ()
 
 (** Point ourselves at another master *)
-let become_another_masters_slave master_address =
+let become_another_masters_slave master_address fqdn =
   let already_that_masters_slave =
     match Pool_role.get_role () with
     | Slave (master_address', _) ->
@@ -209,9 +209,10 @@ let become_another_masters_slave master_address =
   if already_that_masters_slave then
     debug "We are already a slave of %s; nothing to do" master_address
   else
-    let new_role = Pool_role.Slave (master_address, None) in
+    let new_role = Pool_role.Slave (master_address, fqdn) in
     (* hostname will be added to pool.conf when xapi is restarted *)
-    debug "Setting pool.conf to point to %s" master_address ;
+    debug "Setting pool.conf to point to %s %s" master_address
+      (Option.value ~default:"no fqdn" fqdn) ;
     set_role new_role ;
     run_external_scripts false ;
     Xapi_fuse.light_fuse_and_run ()

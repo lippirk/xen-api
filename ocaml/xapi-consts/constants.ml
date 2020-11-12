@@ -198,6 +198,8 @@ let this_node_just_became_master = "this_node_just_became_master"
 (* Environment variables used to communicate with HA reconfigure script *)
 let ha_peers = "ha_peers"
 
+let ha_peers_fqdn = "ha_peers_fqdn"
+
 (* Stores whether we've executed the master scripts *)
 let master_scripts = "master_scripts"
 
