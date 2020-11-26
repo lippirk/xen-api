@@ -56,7 +56,7 @@ jobs:
         uses: avsm/setup-ocaml@v1
         with:
           ocaml-version: ${{ steps.dotenv.outputs.ocaml_version_full }}
-          opam-repository: ${{ steps.dotenv.outputs.repository }}
+          opam-repository: https://github.com/xapi-project/xs-opam.git#feature/REQ-403
 
       - name: Install dependencies
         run: |
