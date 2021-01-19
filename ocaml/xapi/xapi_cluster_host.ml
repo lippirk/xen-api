@@ -13,6 +13,7 @@
  *)
 
 open Xapi_clustering
+module CI = Cluster_interface
 
 module D = Debug.Make (struct let name = "xapi_cluster_host" end)
 
@@ -64,6 +65,25 @@ let create_internal ~__context ~cluster ~host ~pIF : API.ref_Cluster_host =
         ~other_config:[] ~joined:false ;
       ref)
 
+let addr_map_of_cluster ~__context cluster =
+  Db.Cluster.get_cluster_hosts ~__context ~self:cluster
+  |> List.filter_map @@ fun self ->
+     let p_ref = Db.Cluster_host.get_PIF ~__context ~self in
+     let p_rec = Db.PIF.get_record ~__context ~self:p_ref in
+     try
+       (* parallel join: some hosts may not have an IP yet *)
+       let cluster_addr = ip_of_pif (p_ref, p_rec) in
+       let mgmt_addr =
+         CI.FQDN (p_rec.API.pIF_host |> Helpers.address_of_host ~__context)
+       in
+       Some {CI.cluster_addr; mgmt_addr}
+     with _ -> None
+
+let other_cluster_addrs addr_map ~except =
+  addr_map
+  |> List.filter_map @@ fun CI.{cluster_addr} ->
+     if except = cluster_addr then None else Some cluster_addr
+
 (* Helper function atomically enables clusterd and joins the cluster_host *)
 let join_internal ~__context ~self =
   with_clustering_lock __LOC__ (fun () ->
@@ -75,21 +95,8 @@ let join_internal ~__context ~self =
         Db.Cluster.get_cluster_token ~__context ~self:cluster
       in
       let ip = ip_of_pif (pIF, Db.PIF.get_record ~__context ~self:pIF) in
-      let ip_list =
-        Xapi_stdext_std.Listext.List.filter_map
-          (fun self ->
-            let p_ref = Db.Cluster_host.get_PIF ~__context ~self in
-            let p_rec = Db.PIF.get_record ~__context ~self:p_ref in
-            (* parallel join: some hosts may not have an IP yet *)
-            try
-              let other_ip = ip_of_pif (p_ref, p_rec) in
-              if other_ip <> ip then
-                Some other_ip
-              else
-                None
-            with _ -> None)
-          (Db.Cluster.get_cluster_hosts ~__context ~self:cluster)
-      in
+      let addr_map = addr_map_of_cluster ~__context cluster in
+      let ip_list = other_cluster_addrs addr_map ~except:ip in
       if ip_list = [] then
         raise
           Api_errors.(
@@ -98,7 +105,7 @@ let join_internal ~__context ~self =
       Xapi_clustering.Daemon.enable ~__context ;
       let result =
         Cluster_client.LocalClient.join (rpc ~__context) dbg cluster_token ip
-          ip_list
+          ip_list addr_map
       in
       match Idl.IdM.run @@ Cluster_client.IDL.T.get result with
       | Ok () ->
@@ -225,6 +232,10 @@ let forget ~__context ~self =
             (Ref.string_of self) ;
           handle_error error)
 
+let addr_map_of_host ~__context host ip =
+  let mgmt_addr = CI.FQDN (Helpers.address_of_host ~__context host) in
+  [CI.{cluster_addr= ip; mgmt_addr}]
+
 let enable ~__context ~self =
   with_clustering_lock __LOC__ (fun () ->
       let dbg = Context.string_of_task __context in
@@ -248,8 +259,10 @@ let enable ~__context ~self =
           "Cluster_host.enable: xapi-clusterd not running - attempting to start" ;
         Xapi_clustering.Daemon.enable ~__context
       ) ;
+      let addr_map = addr_map_of_host ~__context pifrec.API.pIF_host ip in
       let result =
         Cluster_client.LocalClient.enable (rpc ~__context) dbg init_config
+          addr_map
       in
       match Idl.IdM.run @@ Cluster_client.IDL.T.get result with
       | Ok () ->

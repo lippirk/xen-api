@@ -13,6 +13,7 @@
  *)
 
 open Xapi_clustering
+module CI = Cluster_interface
 
 module D = Debug.Make (struct let name = "xapi_cluster" end)
 
@@ -48,22 +49,32 @@ let create ~__context ~pIF ~cluster_stack ~pool_auto_join ~token_timeout
       let host = Helpers.get_master ~__context in
       let pifrec = Db.PIF.get_record ~__context ~self:pIF in
       assert_pif_prerequisites (pIF, pifrec) ;
-      let ip = ip_of_pif (pIF, pifrec) in
+      let cluster_addr = ip_of_pif (pIF, pifrec) in
       let token_timeout_ms = Int64.of_float (token_timeout *. 1000.0) in
       let token_timeout_coefficient_ms =
         Int64.of_float (token_timeout_coefficient *. 1000.0)
       in
       let init_config =
-        {
-          Cluster_interface.local_ip= ip
-        ; token_timeout_ms= Some token_timeout_ms
-        ; token_coefficient_ms= Some token_timeout_coefficient_ms
-        ; name= None
-        }
+        CI.
+          {
+            local_ip= cluster_addr
+          ; token_timeout_ms= Some token_timeout_ms
+          ; token_coefficient_ms= Some token_timeout_coefficient_ms
+          ; name= None
+          }
       in
       Xapi_clustering.Daemon.enable ~__context ;
+      let mgmt_addr =
+        CI.FQDN
+          (Db.PIF.get_host ~__context ~self:pIF
+          |> Helpers.address_of_host ~__context
+          )
+      in
+      (* associate the PIF to a host *)
+      let addr_map = [CI.{cluster_addr; mgmt_addr}] in
       let result =
         Cluster_client.LocalClient.create (rpc ~__context) dbg init_config
+          addr_map
       in
       match Idl.IdM.run @@ Cluster_client.IDL.T.get result with
       | Ok cluster_token ->

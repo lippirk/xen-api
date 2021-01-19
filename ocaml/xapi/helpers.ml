@@ -1844,3 +1844,10 @@ let pingable addr =
     in
     true
   with _ -> false
+
+let address_of_host ~__context host =
+  (* assume this is an fqdn *)
+  Db.Host.get_address ~__context ~self:host
+
+let my_address ~__context =
+  get_localhost ~__context |> address_of_host ~__context
