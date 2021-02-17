@@ -12,7 +12,7 @@
  * GNU Lesser General Public License for more details.
  *)
 
-type t = Master | Slave of string  (** IP address or FQDN *) | Broken
+type t = Master | Slave of string  (** IP address *) | Broken
 
 val string_of : t -> string
 (** Returns a printable version of [t] *)
@@ -42,5 +42,4 @@ exception This_host_is_a_master
 exception This_host_is_broken
 
 val get_master_address : unit -> string
-
-(** If this node is a slave, returns the address of its master. *)
+(** If this node is a slave, returns the IP address of its master *)
