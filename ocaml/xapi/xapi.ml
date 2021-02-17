@@ -473,9 +473,10 @@ let server_run_in_emergency_mode () =
   wait_to_die () ; exit 0
 
 let update_certificates ~__context () =
+  info "syncing certificates on xapi start" ;
   match Certificates_sync.update ~__context with
   | Ok () ->
-      ()
+      info "successfully synced certificates"
   | Error (`Msg (msg, _)) ->
       error "Failed to update host certificates: %s" msg ;
       server_run_in_emergency_mode ()
@@ -484,6 +485,7 @@ let update_certificates ~__context () =
       server_run_in_emergency_mode ()
 
 let bring_up_management_if ~__context () =
+  update_certificates ~__context |> Xapi_mgmt_iface.add_stunnel_cb ;
   try
     let management_if =
       Xapi_inventory.lookup Xapi_inventory._management_interface
@@ -493,6 +495,7 @@ let bring_up_management_if ~__context () =
         (Xapi_inventory.lookup Xapi_inventory._management_address_type)
     in
     if management_if = "" then (
+      (* we enter this branch during first boot *)
       debug "No management interface defined (management is disabled)" ;
       Xapi_mgmt_iface.run ~__context ~mgmt_enabled:false
     ) else (
@@ -571,7 +574,9 @@ let resynchronise_ha_state () =
       (ExnHelper.string_of_exn e)
 
 (** Reset the networking-related metadata for this host if the command [xe-reset-networking]
- *  was executed before the restart. *)
+ *  was executed before the restart.
+ *  This also gets executed on firstboot, and variables such as MANAGEMENT_INTERFACE are set
+ *  for the first time here *)
 let check_network_reset () =
   try
     (* Raises exception if the file is not there and no reset is required *)
@@ -989,9 +994,6 @@ let server_init () =
           ; ( "hi-level database upgrade"
             , [Startup.OnlyMaster]
             , Xapi_db_upgrade.hi_level_db_upgrade_rules ~__context )
-          ; ( "Update host certificate if changed"
-            , []
-            , update_certificates ~__context )
           ; ( "bringing up management interface"
             , []
             , bring_up_management_if ~__context )
