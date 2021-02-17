@@ -595,11 +595,7 @@ let maybe_set_fqdn_in_pool_conf () =
                   "set_fqdn_in_pool_conf: updating pool.conf with master_fqdn: \
                    %s"
                   master_fqdn ;
-                let r = Slave master_fqdn in
-                Xapi_pool_transition.set_role r ;
-                (* Modifying the ref is justified here because
-                 * we are only correcting the master address *)
-                unsafe_set_role_ref r
+                Slave master_fqdn |> Xapi_pool_transition.set_role
               ) else
                 D.info "set_fqdn_in_pool_conf: not modifying pool.conf"
           | None ->
