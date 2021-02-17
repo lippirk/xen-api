@@ -1452,27 +1452,16 @@ let reset_server_certificate ~__context ~host =
     Db.Certificate.get_records_where ~__context ~expr
   in
   let xapi_ssl_pem = !Xapi_globs.server_cert_path in
-  let ip =
-    match Helpers.get_management_ip_addr ~__context with
-    | None ->
-        let msg =
-          "xapi_host.ml:reset_server_certificate: failed to get management IP"
-        in
-        D.error "%s" msg ;
-        raise Api_errors.(Server_error (internal_error, [msg]))
-    | Some ip ->
-        ip
-  in
-  let alt_names =
+  let common_name, alt_names =
     match Gencertlib.Lib.hostnames () with
+    | cn :: alt ->
+        (cn, alt)
     | [] ->
-        (* should never happen *) [Helper_hostname.get_hostname ()]
-    | xs ->
-        xs
+        (Helper_hostname.get_hostname (), [])
+    (* should never happen *)
   in
-  let cn = ip in
   let certificate, root_fingerprint =
-    Gencertlib.Selfcert.generate cn alt_names xapi_ssl_pem ip
+    Gencertlib.Selfcert.host common_name alt_names xapi_ssl_pem ;
   in
 
   let cert = X509.Certificate.encode_pem certificate |> Cstruct.to_string in
