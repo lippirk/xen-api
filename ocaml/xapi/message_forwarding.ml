@@ -3204,10 +3204,9 @@ functor
             Client.Host.disable_external_auth rpc session_id host config)
 
       let install_ca_certificate ~__context ~host ~name ~cert =
-        info
-          "Host.install_ca_certificate: host = '%s'; name = '%s'; cert = '%s'"
+        info "Host.install_ca_certificate: host = '%s'; name = '%s'"
           (host_uuid ~__context host)
-          name cert ;
+          name ;
         let local_fn = Local.Host.install_ca_certificate ~host ~name ~cert in
         do_op_on ~local_fn ~__context ~host (fun session_id rpc ->
             Client.Host.install_ca_certificate rpc session_id host name cert)
@@ -3232,9 +3231,9 @@ functor
             Client.Host.certificate_list rpc session_id host)
 
       let crl_install ~__context ~host ~name ~crl =
-        info "Host.crl_install: host = '%s'; name = '%s'; crl = '%s'"
+        info "Host.crl_install: host = '%s'; name = '%s'"
           (host_uuid ~__context host)
-          name crl ;
+          name ;
         let local_fn = Local.Host.crl_install ~host ~name ~crl in
         do_op_on ~local_fn ~__context ~host (fun session_id rpc ->
             Client.Host.crl_install rpc session_id host name crl)
@@ -3268,9 +3267,8 @@ functor
 
       let install_server_certificate ~__context ~host ~certificate ~private_key
           ~certificate_chain =
-        info "Host.install_server_certificate: host = '%s'; certificate = '%s'"
-          (host_uuid ~__context host)
-          certificate ;
+        info "Host.install_server_certificate: host = '%s'"
+          (host_uuid ~__context host) ;
         let task = Context.get_task_id __context in
         let local_fn =
           Local.Host.install_server_certificate ~host ~certificate ~private_key
