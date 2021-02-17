@@ -14,10 +14,8 @@
 
 val get_management_ip_addr : dbg:string -> string option
 
-val fqdn_of_hostname : string -> string option
-
-val dns_sans : unit -> string list
-(** List of all subject alternative names for this host *)
+val hostnames : unit -> string list
+(** Try to get all FQDNs, use the hostname if none are available *)
 
 val install_server_certificate :
      ?pem_chain:string option
