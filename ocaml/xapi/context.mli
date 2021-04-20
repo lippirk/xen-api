@@ -137,3 +137,7 @@ val get_client : t -> string option
 val get_client_ip : t -> string option
 
 val get_user_agent : t -> string option
+
+val complete : t -> unit
+
+val debug_times : t -> string

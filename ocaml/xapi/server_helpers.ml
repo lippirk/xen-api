@@ -127,6 +127,9 @@ let exec_with_context ~__context ~need_complete ?marshaller ?f_forward
             info "spawning a new thread to handle the current task%s"
               (Context.trackid ~with_brackets:true ~prefix:" " __context) ;
           Xapi_stdext_pervasives.Pervasiveext.finally exec (fun () ->
+              debug "DEBUG_TIMES: context='%s', json='%s'"
+                (Context.string_of_task __context)
+                (Context.debug_times __context) ;
               if not called_async then Context.destroy __context
               (* else debug "nothing more to process for this thread" *)))
         ())
