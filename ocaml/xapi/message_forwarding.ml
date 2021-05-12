@@ -50,6 +50,21 @@ end)
    marked as down, we use the basic non-retry kind.
 *)
 
+(* hack around xmlrpc_client *)
+let xmlrpc' ?frame ?version ?keep_alive ?task_id ?cookie ?length ?auth
+    ?subtask_of ?query ?(headers = []) ?body path =
+  let user_agent = "xen-api-libs/1.0" in
+  let headers' =
+    match task_id with
+    | None ->
+        []
+    | Some task_id ->
+        [(Http.Hdr.task_id, task_id)]
+  in
+  let headers = List.append headers' headers in
+  Http.Request.make ~user_agent ?frame ?version ?keep_alive ?cookie ~headers
+    ?length ?auth ?subtask_of ?query ?body Http.Post path
+
 (* Use HTTP 1.0, don't use the connection cache and don't pre-verify the connection *)
 let remote_rpc_no_retry context hostname (task_opt : API.ref_task option) xml =
   let open Xmlrpc_client in
@@ -61,8 +76,11 @@ let remote_rpc_no_retry context hostname (task_opt : API.ref_task option) xml =
       , hostname
       , !Constants.https_port )
   in
+  let headers = Context.xaeger_header_of context in
   let http =
-    xmlrpc ?task_id:(Option.map Ref.string_of task_opt) ~version:"1.0" "/"
+    xmlrpc'
+      ?task_id:(Option.map Ref.string_of task_opt)
+      ~version:"1.0" ~headers "/"
   in
   XMLRPC_protocol.rpc ~srcstr:"xapi" ~dststr:"dst_xapi" ~transport ~http xml
 
@@ -77,8 +95,11 @@ let remote_rpc_retry context hostname (task_opt : API.ref_task option) xml =
       , hostname
       , !Constants.https_port )
   in
+  let headers = Context.xaeger_header_of context in
   let http =
-    xmlrpc ?task_id:(Option.map Ref.string_of task_opt) ~version:"1.1" "/"
+    xmlrpc'
+      ?task_id:(Option.map Ref.string_of task_opt)
+      ~headers ~version:"1.1" "/"
   in
   XMLRPC_protocol.rpc ~srcstr:"xapi" ~dststr:"dst_xapi" ~transport ~http xml
 

@@ -176,6 +176,7 @@ let status_is_completed task_status =
   task_status = `success || task_status = `failure || task_status = `cancelled
 
 let complete ~__context result =
+  Context.complete_xaeger __context ;
   operate_on_db_task ~__context (fun self ->
       let status = Db_actions.DB_Action.Task.get_status ~__context ~self in
       if status = `pending then (
@@ -219,6 +220,7 @@ let exn_if_cancelling ~__context =
     raise_cancelled ~__context
 
 let cancel_this ~__context ~self =
+  Context.complete_xaeger __context ;
   assert_op_valid ~__context self ;
   let status = Db_actions.DB_Action.Task.get_status ~__context ~self in
   if status = `pending then (
@@ -236,6 +238,7 @@ let cancel ~__context =
   operate_on_db_task ~__context (fun self -> cancel_this ~__context ~self)
 
 let failed ~__context exn =
+  Context.complete_xaeger __context ;
   let code, params = ExnHelper.error_of_exn exn in
   operate_on_db_task ~__context (fun self ->
       let status = Db_actions.DB_Action.Task.get_status ~__context ~self in

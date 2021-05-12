@@ -137,3 +137,9 @@ val get_client : t -> string option
 val get_client_ip : t -> string option
 
 val get_user_agent : t -> string option
+
+(* val start_xaeger : name:string -> ?parent:t -> t -> unit *)
+(*  *)
+val complete_xaeger : t -> unit
+
+val xaeger_header_of : t -> (string * string) list

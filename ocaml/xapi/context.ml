@@ -35,6 +35,86 @@ let string_of_origin = function
   | Internal ->
       "Internal"
 
+module Xaeger : sig
+  type t
+
+  val empty : t
+
+  val null : t -> bool
+
+  val start : name:string -> parent:t -> t
+
+  val parent_of_http_other_config : (string * string) list -> t
+
+  val header_of : t -> (string * string) list
+
+  val finish : t -> unit
+end = struct
+  module Http = struct
+    (* let base = "http://localhost:5000" *)
+    let base = "http://10.71.57.3:5000"
+
+    let ( let* ) = Lwt.bind
+
+    let post ~body ~route : string option =
+      try
+        let open Cohttp_lwt_unix in
+        let req_body = body in
+        let body = Cohttp_lwt.Body.of_string body in
+        let uri = Printf.sprintf "%s/%s" base route in
+        Lwt_main.run
+          (let* resp, body = Client.call `POST ~body (Uri.of_string uri) in
+           let status = Response.status resp |> Cohttp.Code.string_of_status in
+           let* resp_body = Cohttp_lwt.Body.to_string body in
+           D.debug "XAEGER: req='POST %s %s' resp='%s %s'" uri req_body status
+             resp_body ;
+           Lwt.return (Some resp_body))
+      with e ->
+        D.error "XAEGER: post failed! body=%s, route=%s, exception: %s" body
+          route (Printexc.to_string e) ;
+        None
+  end
+
+  let feature_enabled = true
+
+  type t = string option
+
+  let empty = None
+
+  let null = function None -> true | Some _ -> false
+
+  let start ~name ~parent =
+    if not feature_enabled then
+      None
+    else
+      let body =
+        match parent with
+        | None ->
+            Printf.sprintf {|{"operation_name": "%s"}|} name
+        | Some parent ->
+            Printf.sprintf {|{"operation_name": "%s", "parent": %s}|} name
+              parent
+      in
+      Http.post ~body ~route:"/start-span"
+
+  let finish x =
+    match (x, feature_enabled) with
+    | Some body, true ->
+        let (_ : t) = Http.post ~route:"/finish-span" ~body in
+        ()
+    | _ ->
+        ()
+
+  let parent_of_http_other_config http_other_config =
+    List.assoc_opt "XAEGER" http_other_config
+
+  let header_of = function
+    | None ->
+        []
+    | Some x ->
+        [("x-http-other-config-XAEGER", x)]
+end
+
 type http_t = Https | Http
 
 let string_of_http_t = function Https -> "HTTPS" | Http -> "HTTP"
@@ -48,10 +128,25 @@ type t = {
   ; origin: origin
   ; database: Db_ref.t
   ; dbg: string
+  ; mutable xaeger: Xaeger.t
   ; client: (http_t * Ipaddr.t) option
   ; mutable test_rpc: (Rpc.call -> Rpc.response) option
   ; mutable test_clusterd_rpc: (Rpc.call -> Rpc.response) option
 }
+
+(* let start_xaeger ~name ?parent __context = *)
+(* match __context.xaeger with *)
+(* | Some _ -> *)
+(* () *)
+(* | None -> *)
+(* let parent = match parent with None -> None | Some t -> t.xaeger in *)
+(* __context.xaeger <- Xaeger.start ~name ~parent *)
+(*  *)
+let complete_xaeger __context =
+  Xaeger.finish __context.xaeger ;
+  __context.xaeger <- Xaeger.empty
+
+let xaeger_header_of __context = Xaeger.header_of __context.xaeger
 
 let get_session_id x =
   match x.session_id with
@@ -99,6 +194,7 @@ let get_initial () =
   ; origin= Internal
   ; database= default_database ()
   ; dbg= "initial_task"
+  ; xaeger= Xaeger.empty
   ; client= None
   ; test_rpc= None
   ; test_clusterd_rpc= None
@@ -225,6 +321,7 @@ let from_forwarded_task ?(http_other_config = []) ?session_id
   let dbg = make_dbg http_other_config task_name task_id in
   info "task %s forwarded%s" dbg
     (trackid_of_session ~with_brackets:true ~prefix:" " session_id) ;
+  let parent_xaeger = Xaeger.parent_of_http_other_config http_other_config in
   {
     session_id
   ; task_id
@@ -232,6 +329,7 @@ let from_forwarded_task ?(http_other_config = []) ?session_id
   ; origin
   ; database= default_database ()
   ; dbg
+  ; xaeger= Xaeger.start ~name:task_name ~parent:parent_xaeger
   ; client
   ; test_rpc= None
   ; test_clusterd_rpc= None
@@ -270,6 +368,13 @@ let make ?(http_other_config = []) ?(quiet = false) ?subtask_of ?session_id
             " by task " ^ make_dbg [] "" subtask_of
         )
   ) ;
+  let xaeger =
+    let open Xaeger in
+    if task_in_database then
+      start ~name:task_name ~parent:empty
+    else
+      empty
+  in
   {
     session_id
   ; database
@@ -277,6 +382,7 @@ let make ?(http_other_config = []) ?(quiet = false) ?subtask_of ?session_id
   ; origin
   ; forwarded_task= false
   ; dbg
+  ; xaeger
   ; client
   ; test_rpc= None
   ; test_clusterd_rpc= None
@@ -286,7 +392,15 @@ let make_subcontext ~__context ?task_in_database task_name =
   let session_id = __context.session_id in
   let subtask_of = __context.task_id in
   let subcontext = make ~subtask_of ?session_id ?task_in_database task_name in
-  {subcontext with client= __context.client}
+  let xaeger =
+    let open Xaeger in
+    let parent = __context.xaeger in
+    if null parent then
+      empty
+    else (* only create a xaeger if we're part of a tree *)
+      Xaeger.start ~name:task_name ~parent
+  in
+  {subcontext with client= __context.client; xaeger}
 
 let get_http_other_config http_req =
   let http_other_config_hdr = "x-http-other-config-" in

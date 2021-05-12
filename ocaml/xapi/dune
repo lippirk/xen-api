@@ -45,6 +45,8 @@
    cstruct
    base64
    cohttp
+   cohttp-lwt
+   cohttp-lwt-unix
    domain-name
    ezxenstore.core
    fmt
