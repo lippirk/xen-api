@@ -69,15 +69,10 @@ end = struct
            let status = Response.status resp in
            let status_str = Cohttp.Code.string_of_status status in
            let* resp_body = Cohttp_lwt.Body.to_string body in
-           match status with
-           | `Code 200 ->
-               D.debug "XAEGER: SUCCESS req='POST %s %s' resp='%s %s'" uri
-                 req_body status_str resp_body ;
-               Lwt.return (Some resp_body)
-           | _ ->
-               D.debug "XAEGER: FAIL req='POST %s %s' resp='%s %s' " uri
-                 req_body status_str resp_body ;
-               Lwt.return None)
+           D.debug "XAEGER: SUCCESS req='POST %s %s' resp='%s %s'" uri
+             req_body status_str resp_body ;
+           Lwt.return (Some resp_body)
+               )
       with e ->
         D.error "XAEGER: post failed! body=%s, route=%s, exception: %s" body
           route (Printexc.to_string e) ;
