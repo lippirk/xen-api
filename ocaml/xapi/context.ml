@@ -321,7 +321,14 @@ let from_forwarded_task ?(http_other_config = []) ?session_id
   let dbg = make_dbg http_other_config task_name task_id in
   info "task %s forwarded%s" dbg
     (trackid_of_session ~with_brackets:true ~prefix:" " session_id) ;
-  let parent_xaeger = Xaeger.parent_of_http_other_config http_other_config in
+  let xaeger =
+    let open Xaeger in
+    let parent = parent_of_http_other_config http_other_config in
+    if null parent then
+      empty
+    else
+      start ~name:task_name ~parent
+  in
   {
     session_id
   ; task_id
@@ -329,7 +336,7 @@ let from_forwarded_task ?(http_other_config = []) ?session_id
   ; origin
   ; database= default_database ()
   ; dbg
-  ; xaeger= Xaeger.start ~name:task_name ~parent:parent_xaeger
+  ; xaeger
   ; client
   ; test_rpc= None
   ; test_clusterd_rpc= None
