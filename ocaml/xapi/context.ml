@@ -86,7 +86,12 @@ end = struct
 
   let feature_enabled = true
 
-  type t = string option [@@deriving rpcty]
+  type span_context = {uber_trace_id: string} [@@deriving rpcty]
+
+  type blob = {span_context: span_context; stamp: int; operation_name: string}
+  [@@deriving rpcty]
+
+  type t = blob option [@@deriving rpcty]
 
   type start_span_body = {operation_name: string; parent: t} [@@deriving rpcty]
 
@@ -94,6 +99,14 @@ end = struct
     {operation_name; parent}
     |> Rpcmarshal.marshal start_span_body.Rpc.Types.ty
     |> Jsonrpc.to_string
+
+  let blob_json x = Rpcmarshal.marshal blob.Rpc.Types.ty x |> Jsonrpc.to_string
+
+  let blob_of_string x =
+    x
+    |> Jsonrpc.of_string
+    |> Rpcmarshal.unmarshal blob.Rpc.Types.ty
+    |> Result.to_option
 
   let empty = None
 
@@ -104,24 +117,38 @@ end = struct
       None
     else
       let body = start_span_json ~operation_name:name ~parent in
-      Http.post ~body ~route:"/start-span"
+      match Http.post ~body ~route:"/start-span" with
+      | Some x ->
+          blob_of_string x
+      | None ->
+          D.error "XAEGER: start-span failed: %s" body ;
+          None
 
   let finish x =
     match (x, feature_enabled) with
-    | Some body, true ->
-        let (_ : t) = Http.post ~route:"/finish-span" ~body in
-        ()
+    | Some blob, true -> (
+        let body = blob_json blob in
+        match Http.post ~route:"/finish-span" ~body with
+        | None ->
+            D.error "XAEGER: failed to finish-span: %s" body
+        | Some _ ->
+            ()
+      )
     | _ ->
         ()
 
   let parent_of_http_other_config http_other_config =
-    List.assoc_opt "XAEGER" http_other_config
+    match List.assoc_opt "XAEGER" http_other_config with
+    | None ->
+        None
+    | Some x ->
+        blob_of_string x
 
   let header_of = function
     | None ->
         []
     | Some x ->
-        [("x-http-other-config-XAEGER", x)]
+        [("x-http-other-config-XAEGER", blob_json x)]
 end
 
 type http_t = Https | Http
