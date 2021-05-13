@@ -66,11 +66,18 @@ end = struct
           (let* req_body_json = Cohttp_lwt.Body.to_string body in
            D.debug "XAEGER: request_json='%s'" req_body_json ;
            let* resp, body = Client.call `POST ~body (Uri.of_string uri) in
-           let status = Response.status resp |> Cohttp.Code.string_of_status in
+           let status = Response.status resp in
+           let status_str = Cohttp.Code.string_of_status status in
            let* resp_body = Cohttp_lwt.Body.to_string body in
-           D.debug "XAEGER: req='POST %s %s' resp='%s %s'" uri req_body status
-             resp_body ;
-           Lwt.return (Some resp_body))
+           match status with
+           | `Code 200 ->
+               D.debug "XAEGER: SUCCESS req='POST %s %s' resp='%s %s'" uri
+                 req_body status_str resp_body ;
+               Lwt.return (Some resp_body)
+           | _ ->
+               D.debug "XAEGER: FAIL req='POST %s %s' resp='%s %s' " uri
+                 req_body status_str resp_body ;
+               Lwt.return None)
       with e ->
         D.error "XAEGER: post failed! body=%s, route=%s, exception: %s" body
           route (Printexc.to_string e) ;
