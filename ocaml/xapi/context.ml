@@ -61,9 +61,11 @@ end = struct
         let open Cohttp_lwt_unix in
         let req_body = body in
         let body = Cohttp_lwt.Body.of_string body in
-        let uri = Printf.sprintf "%s/%s" base route in
+        let uri = Printf.sprintf "%s%s" base route in
         Lwt_main.run
-          (let* resp, body = Client.call `POST ~body (Uri.of_string uri) in
+          (let* req_body_json = Cohttp_lwt.Body.to_string body in
+           D.debug "XAEGER: request_json='%s'" req_body_json ;
+           let* resp, body = Client.call `POST ~body (Uri.of_string uri) in
            let status = Response.status resp |> Cohttp.Code.string_of_status in
            let* resp_body = Cohttp_lwt.Body.to_string body in
            D.debug "XAEGER: req='POST %s %s' resp='%s %s'" uri req_body status
@@ -77,7 +79,14 @@ end = struct
 
   let feature_enabled = true
 
-  type t = string option
+  type t = string option [@@deriving rpcty]
+
+  type start_span_body = {operation_name: string; parent: t} [@@deriving rpcty]
+
+  let start_span_json ~operation_name ~parent =
+    {operation_name; parent}
+    |> Rpcmarshal.marshal start_span_body.Rpc.Types.ty
+    |> Jsonrpc.to_string
 
   let empty = None
 
@@ -87,14 +96,7 @@ end = struct
     if not feature_enabled then
       None
     else
-      let body =
-        match parent with
-        | None ->
-            Printf.sprintf {|{"operation_name": "%s"}|} name
-        | Some parent ->
-            Printf.sprintf {|{"operation_name": "%s", "parent": %s}|} name
-              parent
-      in
+      let body = start_span_json ~operation_name:name ~parent in
       Http.post ~body ~route:"/start-span"
 
   let finish x =
