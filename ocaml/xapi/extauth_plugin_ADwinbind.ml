@@ -31,6 +31,12 @@ let tdb_tool = !Xapi_globs.tdb_tool
 
 let debug_level = !Xapi_globs.winbind_debug_level |> string_of_int
 
+let call_wbinfo (args : string list) : (string, exn) result =
+  try
+    let stdout = Helpers.call_script ~log_output:Never wb_cmd args in
+    Ok stdout
+  with e -> Error e
+
 module Winbind = struct
   let name = "winbind"
 
@@ -273,7 +279,22 @@ module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
       supports nested groups (as AD does for example)
   *)
   let query_group_membership subject_identifier =
-    ["To be implemented in CP-36088"]
+    (* example:
+     *
+     * $ wbinfo --user-domgroups S-1-2-34-...
+       S-1-2-34-...
+       S-1-5-21-...
+       ... *)
+    let args = ["--user-domgroups"; subject_identifier] in
+    match call_wbinfo args with
+    | Error _ ->
+        let msg =
+          Printf.sprintf "group membership query failed. SID='%s'"
+            subject_identifier
+        in
+        raise Auth_signature.(Auth_service_error (E_GENERIC, msg))
+    | Ok stdout ->
+        String.split_on_char '\n' stdout |> List.map String.trim
 
   (* unit on_enable(((string*string) list) config_params)
 
