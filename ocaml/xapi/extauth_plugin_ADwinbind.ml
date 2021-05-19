@@ -227,6 +227,46 @@ let clean_local_resources () : unit =
     raise (Auth_service_error (E_GENERIC, msg))
 
 module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
+  (* subject_id get_subject_identifier(string subject_name)
+
+      Takes a subject_name (as may be entered into the XenCenter UI when defining subjects --
+      see Access Control wiki page); and resolves it to a subject_id against the external
+      auth/directory service.
+      Raises Not_found (*Subject_cannot_be_resolved*) if authentication is not succesful.
+  *)
+  let get_subject_identifier subject_name =
+    (* example:
+     *
+     * $ wbinfo -n user@domain.net
+       S-1-2-34-... SID_USER (1)
+     * $ wbinfo -n DOMAIN\user
+       # similar output *)
+    let subject_name =
+      domainify_uname ~domain:(get_service_name ()) subject_name
+    in
+    let args = ["-n"; subject_name] in
+    match call_wbinfo args with
+    | Error e ->
+        let msg =
+          Printf.sprintf "couldn't find SID for subject name '%s'" subject_name
+        in
+        raise
+          (Auth_signature.Auth_service_error (Auth_signature.E_GENERIC, msg))
+    | Ok stdout -> (
+      match String.split_on_char ' ' stdout with
+      | sid :: _ ->
+          String.trim sid
+      | _ ->
+          (* we'd like to also log stdout for debugging purposes, but it may
+           * contain sensitive info *)
+          let msg =
+            Printf.sprintf "unable to find SID in output of 'wbinfo %s'"
+              (String.concat " " args)
+          in
+          raise
+            (Auth_signature.Auth_service_error (Auth_signature.E_GENERIC, msg))
+    )
+
   (* subject_id Authenticate_username_password(string username, string password)
 
       Takes a username and password, and tries to authenticate against an already configured
@@ -249,16 +289,6 @@ module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
   (* future single sign-on feature *)
   let authenticate_ticket tgt =
     failwith "extauth_plugin authenticate_ticket not implemented"
-
-  (* subject_id get_subject_identifier(string subject_name)
-
-      Takes a subject_name (as may be entered into the XenCenter UI when defining subjects --
-      see Access Control wiki page); and resolves it to a subject_id against the external
-      auth/directory service.
-      Raises Not_found (*Subject_cannot_be_resolved*) if authentication is not succesful.
-  *)
-  let get_subject_identifier _subject_name =
-    "get_subject_identifier To be implemented in CP-36087"
 
   (* ((string*string) list) query_subject_information(string subject_identifier)
 
