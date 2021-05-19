@@ -41,5 +41,30 @@ module ExtractOuConfig = Generic.MakeStateless (struct
       ]
 end)
 
+let test_domainify_uname =
+  let open Extauth_plugin_ADwinbind in
+  let check uname exp () =
+    let msg = Printf.sprintf "%s -> %s" uname exp in
+    let ac = domainify_uname ~domain:"domain.net" uname in
+    Alcotest.(check string) msg exp ac
+  in
+  let matrix =
+    [
+      ("KRBTGT", "KRBTGT")
+    ; ({|user|}, {|user@domain.net|})
+    ; ({|user@domain.net|}, {|user@domain.net|})
+    ; ({|DOMAIN\user|}, {|DOMAIN\user|})
+      (* if username already contains a domain, DO NOT try and correct it *)
+    ; ({|user@unknowndomain.net|}, {|user@unknowndomain.net|})
+    ; ({|UNKNOWNDOMAIN\user|}, {|UNKNOWNDOMAIN\user|})
+    ]
+  in
+  matrix
+  |> List.map @@ fun (inp, exp) ->
+     ("test_domainify_uname", `Quick, check inp exp)
+
 let tests =
-  make_suite "xapi_cmd_result_" [("extract_ou_config", ExtractOuConfig.tests)]
+  [
+    ("ADwinbind:extract_ou_config", ExtractOuConfig.tests)
+  ; ("ADwinbind", test_domainify_uname)
+  ]

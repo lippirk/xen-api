@@ -226,6 +226,18 @@ let clean_local_resources () : unit =
     error "%s : %s" msg (ExnHelper.string_of_exn e) ;
     raise (Auth_service_error (E_GENERIC, msg))
 
+let domainify_uname ~domain uname =
+  let open Astring.String in
+  if
+    is_infix ~affix:domain uname
+    || is_infix ~affix:"@" uname
+    || is_infix ~affix:{|\|} uname
+    || uname = krbtgt
+  then
+    uname
+  else
+    Printf.sprintf "%s@%s" uname domain
+
 module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
   (* subject_id get_subject_identifier(string subject_name)
 
@@ -278,8 +290,24 @@ module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
       Raises auth_failure if authentication is not successful
   *)
 
-  let authenticate_username_password username password =
-    "authenticate_ticket To be implemented in CP-35399"
+  let authenticate_username_password uname password =
+    (* example:
+     *
+     * $ wbinfo -a user@domain.net%PASSWD
+       plaintext password authentication succeeded
+       challenge/response password authentication succeeded
+       $ wbinfo -a DOMAIN\user%PASSWD
+       # similar output *)
+    let uname = domainify_uname ~domain:(get_service_name ()) uname in
+    let args = ["-a"; Printf.sprintf "%s%%%s" uname password] in
+    match call_wbinfo args with
+    | Error _ ->
+        let msg =
+          Printf.sprintf "failed to authenticate user. uname='%s'" uname
+        in
+        raise (Auth_service_error (Auth_signature.E_GENERIC, msg))
+    | Ok _stdout ->
+        get_subject_identifier uname
 
   (* subject_id Authenticate_ticket(string ticket)
 

@@ -34,3 +34,5 @@ end
 (* Expose function to make compiler happy for unittest *)
 val extract_ou_config :
   config_params:(string * string) list -> (string * string) list * string list
+
+val domainify_uname : domain:string -> string -> string
