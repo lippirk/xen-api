@@ -23,6 +23,8 @@ open D
 open Xapi_stdext_std.Xstringext
 open Auth_signature
 
+let krbtgt = "KRBTGT"
+
 let net_cmd = !Xapi_globs.net_cmd
 
 let wb_cmd = !Xapi_globs.wb_cmd
@@ -55,17 +57,17 @@ module Winbind = struct
     if is_ad_enabled ~__context then
       start ~wait_until_success:false ~timeout:5.
 
+  let resolve_KRBTGT () : bool =
+    try
+      Helpers.call_script ~log_output:Never wb_cmd ["-n"; krbtgt] |> ignore ;
+      true
+    with _ -> false
+
   let check_ready_to_serve ~timeout =
     (* we _need_ to use a username contained in our domain, otherwise the following tests won't work.
        Microsoft KB/Q243330 article provides the KRBTGT account as a well-known built-in SID in AD
        Microsoft KB/Q229909 article says that KRBTGT account cannot be renamed or enabled, making
        it the perfect target for such a test using a username (Administrator account can be renamed) *)
-    let resolve_KRBTGT () =
-      try
-        Helpers.call_script ~log_output:Never wb_cmd ["-n"; "KRBTGT"] |> ignore ;
-        true
-      with _ -> false
-    in
     try
       Helpers.retry_until_timeout ~timeout
         (Printf.sprintf "Checking %s ready to serve" name)
@@ -393,7 +395,42 @@ module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
       starting for the first time after a host boot
   *)
   let on_xapi_initialize system_boot =
-    debug "on_xapi_initialize To be implemented in CP-36089"
+    let ( let* ) = Result.bind in
+    let max_retries = 12 in
+    Server_helpers.exec_with_new_task "winbind: on_xapi_initialize"
+    @@ fun __context ->
+    let try_init (attempt_n : int) : (unit, unit) result =
+      let* () =
+        try
+          Winbind.init_service ~__context ;
+          Ok ()
+        with _ ->
+          D.warn "attempt=%i/%i. init_service failed" attempt_n max_retries ;
+          Error ()
+      in
+      if Winbind.resolve_KRBTGT () then
+        Ok ()
+      else (
+        D.warn "attempt=%i/%i. resolve_KRBTGT" attempt_n max_retries ;
+        Error ()
+      )
+    in
+    let rec retry = function
+      | 0 ->
+          let msg =
+            Printf.sprintf "winbind is not available after %i tries" max_retries
+          in
+          raise
+            (Auth_signature.Auth_service_error (Auth_signature.E_GENERIC, msg))
+      | n -> (
+        match try_init n with
+        | Ok () ->
+            D.debug "winbind daemon checks succeeded"
+        | Error () ->
+            (retry [@tailcall]) (n - 1)
+      )
+    in
+    retry max_retries
 
   (* unit on_xapi_exit()
 
