@@ -15,6 +15,9 @@
  * @group Access Control
 *)
 
+module D = Debug.Make (struct let name = "xapi_auth" end)
+
+module Unixext = Xapi_stdext_unix.Unixext
 open Auth_signature
 open Extauth
 
@@ -48,3 +51,41 @@ let get_group_membership ~__context ~subject_identifier =
 let get_subject_information_from_identifier ~__context ~subject_identifier =
   call_with_exception_handler (fun () ->
       (Ext_auth.d ()).query_subject_information subject_identifier)
+
+let sanity_check ~__context =
+  let qsi name =
+    try
+      let res = (Ext_auth.d ()).get_subject_identifier name in
+      D.debug "bena: get_subject_identifier SUCCESS %s: %s" name res
+    with e ->
+      D.error "bena: get_subject_identifier %s FAIL. ex: %s" name
+        (Printexc.to_string e)
+  in
+  qsi "KRBTGT" ;
+  qsi "ladmin" ;
+
+  let qgm name =
+    try
+      let sid = (Ext_auth.d ()).get_subject_identifier name in
+      let res = (Ext_auth.d ()).query_group_membership sid in
+      let res_str = res |> String.concat "; " |> Printf.sprintf "[ %s ]" in
+      D.debug "bena: query_group_membership SUCCESS %s: %s" name res_str
+    with e ->
+      D.error "bena: query_group_membership %s FAIL. ex: %s" name
+        (Printexc.to_string e)
+  in
+  qgm "KRBTGT" ;
+  qgm "ladmin" ;
+
+  let auth uname password =
+    try
+      let res = (Ext_auth.d ()).authenticate_username_password uname password in
+      D.debug "bena: auth SUCCESS uname=%s password=%s: %s" uname password res
+    with e ->
+      D.error "bena: auth uname=%s passwd=%s FAIL ex: %s" uname password
+        (Printexc.to_string e)
+  in
+  (* auth "KRBTGT" "AAAAA" ; *)
+  auth "ladmin" "12345678"
+
+let sanity_check ~__context = Thread.delay 10. ; sanity_check ~__context

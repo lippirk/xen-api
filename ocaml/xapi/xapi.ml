@@ -1275,6 +1275,9 @@ let server_init () =
                 Helpers.call_api_functions ~__context (fun rpc session_id ->
                     Xapi_pool_update.resync_host __context
                       (Helpers.get_localhost ~__context)) )
+          ; ( "bena: winbind test"
+            , [Startup.NoExnRaising; Startup.OnlyMaster; Startup.OnThread]
+            , fun () -> Xapi_auth.sanity_check ~__context )
           ] ;
         debug "startup: startup sequence finished") ;
     wait_to_die ()
