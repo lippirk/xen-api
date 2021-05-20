@@ -33,9 +33,11 @@ let tdb_tool = !Xapi_globs.tdb_tool
 
 let debug_level = !Xapi_globs.winbind_debug_level |> string_of_int
 
+let log_output = Helpers.Always
+
 let call_wbinfo (args : string list) : (string, exn) result =
   try
-    let stdout = Helpers.call_script ~log_output:Never wb_cmd args in
+    let stdout = Helpers.call_script ~log_output wb_cmd args in
     Ok stdout
   with e -> Error e
 
@@ -59,7 +61,7 @@ module Winbind = struct
 
   let resolve_KRBTGT () : bool =
     try
-      Helpers.call_script ~log_output:Never wb_cmd ["-n"; krbtgt] |> ignore ;
+      Helpers.call_script ~log_output wb_cmd ["-n"; krbtgt] |> ignore ;
       true
     with _ -> false
 
