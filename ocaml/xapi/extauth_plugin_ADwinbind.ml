@@ -518,6 +518,42 @@ module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
   let authenticate_ticket tgt =
     failwith "extauth_plugin authenticate_ticket not implemented"
 
+  let query_subject_information_group (name : string) (gid : int) (sid : string)
+      =
+    [
+      ("subject-name", name)
+    ; ("subject-gid", string_of_int gid)
+    ; ("subject-sid", sid)
+    ; ("subject-is-group", string_of_bool true)
+    ]
+
+  let query_subject_information_user (name : string) (uid : int) (sid : string)
+      =
+    let* {gecos; gid} = Wbinfo.uid_info_of_uid uid in
+    let* {
+           upn
+         ; account_disabled
+         ; account_expired
+         ; account_locked
+         ; password_expired
+         } =
+      Ldap.query_user sid
+    in
+    Ok
+      [
+        ("subject-name", name)
+      ; ("subject-gecos", gecos)
+      ; ( "subject-displayname"
+        , if gecos = "" || gecos = "<null>" then name else gecos )
+      ; ("subject-uid", string_of_int uid)
+      ; ("subject-gid", string_of_int gid)
+      ; ("subject-upn", upn)
+      ; ("subject-account-disabled", string_of_bool account_disabled)
+      ; ("subject-account-locked", string_of_bool account_locked)
+      ; ("subject-account-expired", string_of_bool account_expired)
+      ; ("subject-password-expired", string_of_bool password_expired)
+      ; ("subject-is-group", string_of_bool false)
+      ]
 
   (* ((string*string) list) query_subject_information(string subject_identifier)
 
@@ -529,8 +565,26 @@ module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
       it's a string*string list anyway for possible future expansion.
       Raises Not_found (*Subject_cannot_be_resolved*) if subject_id cannot be resolved by external auth service
   *)
-  let query_subject_information subject_identifier =
-    failwith "extauth_plugin authenticate_ticket not implemented"
+  let query_subject_information (sid : string) =
+    (* we have to aggregate information from wbinfo and / or an ldap query (using net binary)
+     * to begin with, we don't even know if the sid belongs to a group or a user
+     * so we first do a test with [try_user] and/or [try_group] *)
+    let res =
+      let* name = Wbinfo.name_of_sid sid in
+      match Wbinfo.uid_of_sid sid with
+      | Ok uid ->
+          query_subject_information_user name uid sid
+      | Error _ -> (
+        match Wbinfo.gid_of_sid sid with
+        | Error _ ->
+            Error
+              (generic_ex "could not associate sid='%s' with a user or a group"
+                 sid)
+        | Ok gid ->
+            Ok (query_subject_information_group name gid sid)
+      )
+    in
+    maybe_raise res
 
   (* (string list) query_group_membership(string subject_identifier)
 
