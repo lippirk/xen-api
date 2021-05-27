@@ -505,8 +505,9 @@ module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
       Raises auth_failure if authentication is not successful
   *)
 
-  let authenticate_username_password username password =
-    "authenticate_ticket To be implemented in CP-35399"
+  let authenticate_username_password uname password =
+    let () = maybe_raise (ntlm_auth uname password) in
+    get_subject_identifier uname
 
   (* subject_id Authenticate_ticket(string ticket)
 
