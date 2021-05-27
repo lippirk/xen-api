@@ -540,7 +540,7 @@ module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
       supports nested groups (as AD does for example)
   *)
   let query_group_membership subject_identifier =
-    ["To be implemented in CP-36088"]
+    maybe_raise (Wbinfo.user_domgroups subject_identifier)
 
   (* unit on_enable(((string*string) list) config_params)
 
