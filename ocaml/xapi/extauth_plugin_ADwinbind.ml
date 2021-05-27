@@ -23,6 +23,20 @@ open D
 open Xapi_stdext_std.Xstringext
 open Auth_signature
 
+let krbtgt = "KRBTGT"
+
+let ( let* ) = Result.bind
+
+let ( <!> ) x f = Rresult.R.reword_error f x
+
+let maybe_raise (x : ('a, exn) result) : 'a =
+  match x with Ok x -> x | Error e -> raise e
+
+let generic_ex fmt =
+  Printf.kprintf
+    (fun msg -> Auth_signature.(Auth_service_error (E_GENERIC, msg)))
+    fmt
+
 let net_cmd = !Xapi_globs.net_cmd
 
 let wb_cmd = !Xapi_globs.wb_cmd
@@ -30,6 +44,245 @@ let wb_cmd = !Xapi_globs.wb_cmd
 let tdb_tool = !Xapi_globs.tdb_tool
 
 let debug_level = !Xapi_globs.winbind_debug_level |> string_of_int
+
+let ntlm_auth uname passwd : (unit, exn) result =
+  try
+    let args = ["--username"; uname] in
+    let _stdout =
+      Helpers.call_script ~log_output:Never ~stdin:passwd
+        !Xapi_globs.ntlm_auth_cmd args
+    in
+    Ok ()
+  with e -> Error e
+
+let call_ldap (query : string) : (string, exn) result =
+  try
+    let args = ["ads"; "search"; "--machine-pass"; query] in
+    let stdout =
+      Helpers.call_script ~log_output:On_failure !Xapi_globs.net_cmd args
+    in
+    Ok stdout
+  with e -> Error e
+
+let call_wbinfo (args : string list) : (string, exn) result =
+  try
+    (* we trust wbinfo will not print any sensitive info on failure *)
+    let stdout = Helpers.call_script ~log_output:On_failure wb_cmd args in
+    Ok stdout
+  with e -> Error e
+
+module Ldap = struct
+  type user = {
+      upn: string
+    ; account_disabled: bool
+    ; account_expired: bool
+    ; account_locked: bool
+    ; password_expired: bool
+  }
+  [@@deriving rpcty]
+
+  let string_of_user x =
+    Rpcmarshal.marshal user.Rpc.Types.ty x |> Jsonrpc.to_string
+
+  let parse_user stdout : (user, string) result =
+    let module Map = Map.Make (String) in
+    let module P = struct
+      open Angstrom
+
+      let is_space = function ' ' -> true | _ -> false
+
+      let s = take_while is_space
+
+      let ns = take_while @@ fun x -> not (is_space x)
+
+      let is_whitespace = function
+        | ' ' | '\n' | '\t' | '\r' ->
+            true
+        | _ ->
+            false
+
+      let ws = skip_while is_whitespace
+
+      (* example inputs: "key: value\n" or "key: value with spaces\r\n" *)
+      let kvp =
+        let* key = s *> take_while (fun x -> x <> ':') <* char ':' in
+        let* value =
+          s *> take_while (function '\n' | '\r' -> false | _ -> true)
+          <* (end_of_line <|> end_of_input)
+        in
+        return (key, value)
+
+      let header =
+        let* num_replies =
+          choice ~failure_msg:"unexpected header"
+            [string "Got" *> char ' ' *> ns <* char ' ' <* string "replies"]
+        in
+        match num_replies with
+        | "1" ->
+            return ()
+        | _ ->
+            Printf.sprintf "got %s replies" num_replies |> fail
+
+      let p =
+        let* () = ws *> header <* ws in
+        let* l = ws *> many kvp <* ws <* end_of_input in
+        return (l |> List.to_seq |> Map.of_seq)
+
+      let parse (x : string) : (string Map.t, string) result =
+        parse_string ~consume:All p x
+    end in
+    let ldap fmt = fmt |> Printf.kprintf @@ Printf.sprintf "ldap %s" in
+    let* kvps = P.parse stdout <!> ldap "parsing failed '%s'" in
+    let get_string k =
+      match Map.find_opt k kvps with
+      | None ->
+          Error (ldap "missing key '%s'" k)
+      | Some x ->
+          Ok x
+    in
+    let get_int of_string k =
+      let* str = get_string k in
+      try Ok (of_string str)
+      with _ -> Error (ldap "invalid value for key '%s'" k)
+    in
+    let* upn = get_string "userPrincipalName" in
+    let* user_account_control = get_int Int32.of_string "userAccountControl" in
+    let* account_expires = get_int Int64.of_string "accountExpires" in
+    let account_expired =
+      (* see https://docs.microsoft.com/en-us/windows/win32/adschema/a-accountexpires *)
+      let windows_nt_time_to_unix_time x =
+        Int64.sub (Int64.div x 10000000L) 11644473600L
+      in
+      match account_expires with
+      | 0L | 9223372036854775807L ->
+          false
+      | i ->
+          let expire_unix_time =
+            windows_nt_time_to_unix_time i |> Int64.to_float
+          in
+          expire_unix_time < Unix.time ()
+    in
+    Ok
+      {
+        upn
+      ; account_expired
+        (* see https://docs.microsoft.com/en-us/windows/win32/adschema/a-useraccountcontrol
+         * for bit flag docs *)
+      ; account_disabled= Int32.logand user_account_control 2l <> 0l
+      ; account_locked= Int32.logand user_account_control 16l <> 0l
+      ; password_expired= Int32.logand user_account_control 8388608l <> 0l
+      }
+
+  let query_user sid =
+    let query = Printf.sprintf "(&(objectClass=user)(objectSid=%s))" sid in
+    let* stdout =
+      call_ldap query <!> fun _ -> generic_ex "ldap query failed: '%s'" query
+    in
+    parse_user stdout <!> generic_ex "%s"
+end
+
+module Wbinfo = struct
+  let can_resolve_krbtgt () =
+    match call_wbinfo ["-n"; krbtgt] with Ok _ -> true | Error _ -> false
+
+  let sid_of_name name =
+    (* example:
+     *
+     * $ wbinfo -n user@domain.net
+       S-1-2-34-... SID_USER (1)
+     * $ wbinfo -n DOMAIN\user
+       # similar output *)
+    let args = ["-n"; name] in
+    let* stdout =
+      call_wbinfo args <!> fun _ ->
+      generic_ex "'wbinfo %s' failed" (String.concat " " args)
+    in
+    match String.split_on_char ' ' stdout with
+    | sid :: _ ->
+        Ok (String.trim sid)
+    | [] ->
+        Error
+          (generic_ex "unable to find SID in output of 'wbinfo %s'"
+             (String.concat " " args))
+
+  let name_of_sid sid =
+    (* example:
+     * $ wbinfo -s S-1-5-21-3143668282-2591278241-912959342-502
+       CONNAPP\krbtgt 1 *)
+    let args = ["-s"; sid] in
+    let* stdout =
+      call_wbinfo args <!> fun _ ->
+      generic_ex "'wbinfo %s' failed" (String.concat " " args)
+    in
+    (* we need to drop everything after the last space *)
+    match List.rev (String.split_on_char ' ' stdout) with
+    | [] ->
+        Error (generic_ex "parsing 'wbinfo %s' failed" (String.concat " " args))
+    | _ :: xs ->
+        Ok (List.rev xs |> String.concat " " |> String.trim)
+
+  let gid_of_sid sid =
+    let args = ["-Y"; sid] in
+    let* stdout =
+      call_wbinfo args <!> fun _ ->
+      generic_ex "'wbinfo %s' failed" (String.concat " " args)
+    in
+    try Ok (String.trim stdout |> int_of_string)
+    with _ ->
+      Error (generic_ex "parsing 'wbinfo %s' failed" (String.concat " " args))
+
+  let user_domgroups sid =
+    (* example:
+     *
+     * $ wbinfo --user-domgroups S-1-2-34-...
+       S-1-2-34-...
+       S-1-5-21-...
+       ... *)
+    let args = ["--user-domgroups"; sid] in
+    let* stdout =
+      call_wbinfo args <!> fun _ ->
+      generic_ex "'wbinfo %s' failed" (String.concat " " args)
+    in
+    Ok (String.split_on_char '\n' stdout |> List.map String.trim)
+
+  let uid_of_sid sid =
+    let args = ["-S"; sid] in
+    let* stdout =
+      call_wbinfo args <!> fun _ ->
+      generic_ex "'wbinfo %s' failed" (String.concat " " args)
+    in
+    try Ok (String.trim stdout |> int_of_string)
+    with _ ->
+      Error (generic_ex "parsing 'wbinfo %s' failed" (String.concat " " args))
+
+  type uid_info = {user_name: string; uid: int; gid: int; gecos: string}
+  [@@deriving rpcty]
+
+  let string_of_uid_info x =
+    Rpcmarshal.marshal uid_info.Rpc.Types.ty x |> Jsonrpc.to_string
+
+  let parse_uid_info stdout =
+    (* looks like one line from /etc/passwd: https://en.wikipedia.org/wiki/Passwd#Password_file *)
+    let err =
+      let msg = "could not parse 'wbinfo --uid-info'" in
+      Error msg
+    in
+    match String.split_on_char ':' stdout with
+    | [user_name; _passwd; uid; gid; gecos; _homedir; _shell] -> (
+      try Ok {user_name; uid= int_of_string uid; gid= int_of_string gid; gecos}
+      with _ -> err
+    )
+    | _ ->
+        err
+
+  let uid_info_of_uid (uid : int) =
+    let args = ["--uid-info"; string_of_int uid] in
+    let* stdout =
+      call_wbinfo args <!> fun _ ->
+      generic_ex "'wbinfo %s' failed" (String.concat " " args)
+    in
+    parse_uid_info stdout <!> generic_ex "%s"
+end
 
 module Winbind = struct
   let name = "winbind"
@@ -220,6 +473,18 @@ let clean_local_resources () : unit =
     let msg = "Failed to clean local samba resources" in
     error "%s : %s" msg (ExnHelper.string_of_exn e) ;
     raise (Auth_service_error (E_GENERIC, msg))
+
+let domainify_uname ~domain uname =
+  let open Astring.String in
+  if
+    is_infix ~affix:domain uname
+    || is_infix ~affix:"@" uname
+    || is_infix ~affix:{|\|} uname
+    || uname = krbtgt
+  then
+    uname
+  else
+    Printf.sprintf "%s@%s" uname domain
 
 module AuthADWinbind : Auth_signature.AUTH_MODULE = struct
   (* subject_id Authenticate_username_password(string username, string password)
