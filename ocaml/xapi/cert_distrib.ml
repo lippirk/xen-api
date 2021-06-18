@@ -345,6 +345,21 @@ let collect_pool_certs ~__context ~rpc ~session_id ~map ~from_hosts =
          map cert
      )
 
+let _distrib_m = Mutex.create ()
+
+(* apply this lock around all top level calls.
+ * we really want to avoid multiple threads trying to
+ * modify the contents of /etc/stunnel at the same time *)
+let lock (f : unit -> 'a) : 'a =
+  D.debug "cert_distrib.ml: locking..." ;
+  Mutex.lock _distrib_m ;
+  Fun.protect
+    ~finally:(fun () ->
+      D.debug "cert_distrib.ml: unlocking..." ;
+      Mutex.unlock _distrib_m
+      )
+    f
+
 let exchange_certificates_among_all_members ~__context =
   (* here we coordinate the certificate distribution. from a high level
      we do the following:
@@ -363,6 +378,7 @@ let exchange_certificates_among_all_members ~__context =
          we do not guarantee 'atomicity', so if regenerating the bundle on one host
          fails, then state across the pool will most likely become inconsistent, and
          manual intervention may be required *)
+  lock @@ fun () ->
   let all_hosts = Xapi_pool_helpers.get_master_slaves_list ~__context in
   Helpers.call_api_functions ~__context @@ fun rpc session_id ->
   let certs =
@@ -396,6 +412,7 @@ let import_joiner ~__context ~uuid ~certificate ~to_hosts =
 
 (* This function is called on the pool that is incorporating a new host *)
 let exchange_certificates_with_joiner ~__context ~uuid ~certificate =
+  lock @@ fun () ->
   let all_hosts = Db.Host.get_all ~__context in
   import_joiner ~__context ~uuid ~certificate ~to_hosts:all_hosts ;
   Helpers.call_api_functions ~__context @@ fun rpc session_id ->
@@ -404,16 +421,21 @@ let exchange_certificates_with_joiner ~__context ~uuid ~certificate =
 
 (* This function is called on the host that is joining a pool *)
 let import_joining_pool_certs ~__context ~pool_certs =
+  lock @@ fun () ->
   let pool_certs = List.map WireProtocol.certificate_file_of_pair pool_certs in
   Worker.local_write_cert_fs ~__context HostPoolCertificate Merge pool_certs ;
   Worker.local_regen_bundle ~__context
 
-let collect_ca_certs ~__context ~names =
+let collect_ca_certs_no_lock ~__context ~names =
   Worker.local_collect_certs ApplianceCertificate ~__context names
   |> List.map WireProtocol.pair_of_certificate_file
 
+let collect_ca_certs ~__context ~names =
+  lock @@ fun () -> collect_ca_certs_no_lock ~__context ~names
+
 (* This function is called on the pool that is incorporating a new host *)
 let exchange_ca_certificates_with_joiner ~__context ~import ~export =
+  lock @@ fun () ->
   let all_hosts = Db.Host.get_all ~__context in
   let appliance_certs = List.map WireProtocol.certificate_file_of_pair import in
 
@@ -428,11 +450,11 @@ let exchange_ca_certificates_with_joiner ~__context ~import ~export =
   List.iter
     (fun host -> Worker.remote_regen_bundle host rpc session_id)
     all_hosts ;
-
-  collect_ca_certs ~__context ~names:export
+  collect_ca_certs_no_lock ~__context ~names:export
 
 (* This function is called on the host that is joining a pool *)
 let import_joining_pool_ca_certificates ~__context ~ca_certs =
+  lock @@ fun () ->
   let appliance_certs =
     List.map WireProtocol.certificate_file_of_pair ca_certs
   in
