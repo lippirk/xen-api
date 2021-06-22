@@ -2095,3 +2095,17 @@ let update_ca_bundle =
              "/opt/xensource/bin/update-ca-bundle.sh" []
           )
     )
+
+let do_i_trust_everyone ~__context : bool =
+  let expected_files =
+    Db.Host.get_all ~__context
+    |> List.map (fun self -> Db.Host.get_uuid ~__context ~self)
+    |> List.map (fun x -> x ^ ".pem")
+    |> StringSet.of_list
+  in
+  let actual_files =
+    Sys.readdir !Xapi_globs.trusted_pool_certs_dir
+    |> Array.to_seq
+    |> StringSet.of_seq
+  in
+  StringSet.subset expected_files actual_files

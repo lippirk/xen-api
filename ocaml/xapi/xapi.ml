@@ -844,6 +844,18 @@ let init_tls_verification () =
       info "TLS verification is enabled: %s" file ;
       Stunnel_client.set_verify_by_default true
 
+let maybe_copy_primary_host_certs ~__context () =
+  let open Helpers in
+  if
+    Db.Pool.get_tls_verification_enabled ~__context ~self:(get_pool ~__context)
+    && not (do_i_trust_everyone ~__context)
+  then
+    let host = get_localhost ~__context in
+    call_api_functions ~__context @@ fun rpc session_id ->
+    retry ~__context ~doc:"Host.copy_primary_host_certs" (fun () ->
+        Client.Client.Host.copy_primary_host_certs ~rpc ~session_id ~host
+    )
+
 let server_init () =
   let print_server_starting_message () =
     debug "(Re)starting xapi" ;
@@ -1139,6 +1151,10 @@ let server_init () =
         Startup.run ~__context
           [
             ("Checking emergency network reset", [], check_network_reset)
+          ; ( "do i trust everyone"
+            , [Startup.OnlySlave]
+            , maybe_copy_primary_host_certs ~__context
+            )
           ; ( "Upgrade bonds to Boston"
             , [Startup.NoExnRaising]
             , Sync_networking.fix_bonds ~__context
