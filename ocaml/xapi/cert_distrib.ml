@@ -117,6 +117,8 @@ module HostPoolProvider = struct
         certificate_of_id_content uuid host_cert
 end
 
+let string_of_file path = Unixext.read_lines path |> String.concat "\n"
+
 module ApplianceProvider = struct
   let store_path = !Xapi_globs.trusted_certs_dir
 
@@ -124,10 +126,7 @@ module ApplianceProvider = struct
     WireProtocol.{filename; content}
 
   let read_certificate filename =
-    let content =
-      Unixext.read_lines (Filename.concat store_path filename)
-      |> String.concat "\n"
-    in
+    let content = string_of_file (Filename.concat store_path filename) in
     certificate_of_id_content filename content
 end
 
@@ -394,6 +393,24 @@ let exchange_certificates_among_all_members ~__context =
   List.iter
     (fun host -> Worker.remote_regen_bundle host rpc session_id)
     all_hosts
+
+let copy_certs_to_host ~__context ~host =
+  lock @@ fun () ->
+  Helpers.call_api_functions ~__context @@ fun rpc session_id ->
+  let certs =
+    Sys.readdir !Xapi_globs.trusted_pool_certs_dir
+    |> Array.to_list
+    |> List.map (fun filename ->
+           let path =
+             Filename.concat !Xapi_globs.trusted_pool_certs_dir filename
+           in
+           let content = string_of_file path in
+           WireProtocol.{filename; content}
+       )
+  in
+  Worker.remote_write_certs_fs HostPoolCertificate Erase_old certs host rpc
+    session_id ;
+  Worker.remote_regen_bundle host rpc session_id
 
 let import_joiner ~__context ~uuid ~certificate ~to_hosts =
   let joiner_certificate =

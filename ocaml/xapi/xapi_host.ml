@@ -2652,6 +2652,8 @@ let alert_if_tls_verification_was_emergency_disabled ~__context =
 let cert_distrib_atom ~__context ~host ~command =
   Cert_distrib.local_exec ~__context ~command
 
+let copy_primary_host_certs ~__context ~host = ()
+
 let get_host_updates_handler (req : Http.Request.t) s _ =
   let uuid = Helpers.get_localhost_uuid () in
   debug

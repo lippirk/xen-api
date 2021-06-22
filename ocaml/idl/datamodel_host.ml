@@ -1459,6 +1459,18 @@ let host_query_ha = call ~flags:[`Session]
     ~allowed_roles:_R_POOL_ADMIN
     ()
 
+  let copy_primary_host_certs = call
+    ~name:"copy_primary_host_certs"
+    ~in_oss_since:None
+    ~in_product_since:rel_next
+    ~doc:"useful for secondary slaves that are missing some certs"
+    ~params:[
+      Ref _host, "host", "the primary host will copy its set of trusted certs onto this host";
+    ]
+    ~allowed_roles:_R_POOL_ADMIN
+    ~hide_from_docs:true
+    ()
+
   (** Hosts *)
   let t =
     create_obj ~in_db:true ~in_product_since:rel_rio ~in_oss_since:oss_since_303 ~internal_deprecated_since:None ~persist:PersistEverything ~gen_constructor_destructor:false ~name:_host ~descr:"A physical host" ~gen_events:true
@@ -1587,6 +1599,7 @@ let host_query_ha = call ~flags:[`Session]
         emergency_reenable_tls_verification;
         cert_distrib_atom;
         apply_updates;
+        copy_primary_host_certs;
       ]
       ~contents:
         ([ uid _host;
