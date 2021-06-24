@@ -1950,3 +1950,17 @@ end = struct
       error "redirect: failed to write to %s" fname ;
       raise e
 end
+
+let get_cluster_pems ~__context =
+  let open Cluster_interface in
+  let module Client = Client.Client in
+  Db.Cluster_host.get_all ~__context
+  |> List.find_opt (fun self -> Db.Cluster_host.get_enabled ~__context ~self)
+  |> Option.map (fun self ->
+         call_api_functions ~__context @@ fun rpc session_id ->
+         Client.Cluster_host.get_cluster_config rpc session_id self
+         |> SecretString.rpc_of_t
+         |> Rpcmarshal.unmarshal cluster_config.Rpc.Types.ty
+         |> Result.get_ok
+     )
+  |> Fun.flip Option.bind (fun cc -> cc.pems)
