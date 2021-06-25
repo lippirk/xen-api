@@ -20,13 +20,6 @@ module Gencert = Gencertlib.Selfcert
 
 open D
 
-let unit_test () : bool =
-  match Context.get_test_clusterd_rpc __context with
-  | Some _ ->
-      true
-  | None ->
-      false
-
 (* TODO: update allowed_operations on boot/toolstack-restart *)
 
 let validate_params ~token_timeout ~token_timeout_coefficient =
@@ -62,11 +55,11 @@ let create ~__context ~pIF ~cluster_stack ~pool_auto_join ~token_timeout
       let token_timeout_coefficient_ms =
         Int64.of_float (token_timeout_coefficient *. 1000.0)
       in
-      let cn = cluster_uuid in
       let pems =
-        if unit_test () then
+        if Helpers.unit_test ~__context then
           None
         else
+          let cn = cluster_uuid in
           Some
             Cluster_interface.{
               cn

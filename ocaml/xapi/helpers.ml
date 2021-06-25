@@ -1951,16 +1951,28 @@ end = struct
       raise e
 end
 
+let unit_test ~__context : bool =
+  Pool_role.is_unit_test ()
+  ||
+  match Context.get_test_clusterd_rpc __context with
+  | Some _ ->
+      true
+  | None ->
+      false
+
 let get_cluster_pems ~__context =
   let open Cluster_interface in
   let module Client = Client.Client in
-  Db.Cluster_host.get_all ~__context
-  |> List.find_opt (fun self -> Db.Cluster_host.get_enabled ~__context ~self)
-  |> Option.map (fun self ->
-         call_api_functions ~__context @@ fun rpc session_id ->
-         Client.Cluster_host.get_cluster_config rpc session_id self
-         |> SecretString.rpc_of_t
-         |> Rpcmarshal.unmarshal cluster_config.Rpc.Types.ty
-         |> Result.get_ok
-     )
-  |> Fun.flip Option.bind (fun cc -> cc.pems)
+  if unit_test ~__context then
+    None
+  else
+    Db.Cluster_host.get_all ~__context
+    |> List.find_opt (fun self -> Db.Cluster_host.get_enabled ~__context ~self)
+    |> Option.map (fun self ->
+           call_api_functions ~__context @@ fun rpc session_id ->
+           Client.Cluster_host.get_cluster_config rpc session_id self
+           |> SecretString.rpc_of_t
+           |> Rpcmarshal.unmarshal cluster_config.Rpc.Types.ty
+           |> Result.get_ok
+       )
+    |> Fun.flip Option.bind (fun cc -> cc.pems)

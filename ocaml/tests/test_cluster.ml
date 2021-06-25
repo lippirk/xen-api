@@ -73,6 +73,13 @@ let test_rpc ~__context call =
       let open API in
       Xapi_cluster.destroy ~__context ~self:(ref_Cluster_of_rpc self) ;
       Rpc.{success= true; contents= Rpc.String ""; is_notification= false}
+  | "Cluster_host.get_cluster_config", _ ->
+      Rpc.
+        {
+          success= true
+        ; contents= Rpc.String ""
+        ; is_notification= false
+        }
   | name, params ->
       Alcotest.failf "Unexpected RPC: %s(%s)" name
         (String.concat " " (List.map Rpc.to_string params))
