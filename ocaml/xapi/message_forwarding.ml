@@ -5746,6 +5746,7 @@ functor
         find_first_live other_hosts
 
       let get_cluster_config ~__context ~self =
+        info "Cluster_host.get_cluster_config:%s" (Ref.string_of self) ;
         let host = Db.Cluster_host.get_host ~__context ~self in
         let local_fn = Local.Cluster_host.get_cluster_config ~self in
         do_op_on ~__context ~local_fn ~host (fun session_id rpc ->

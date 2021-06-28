@@ -34,6 +34,8 @@ module D = Debug.Make (struct let name = "helpers" end)
 open D
 module StringSet = Set.Make (String)
 
+let (let*) = Result.bind
+
 let log_exn_continue msg f x =
   try f x
   with e ->
@@ -1950,7 +1952,6 @@ end = struct
       error "redirect: failed to write to %s" fname ;
       raise e
 end
-
 let unit_test ~__context : bool =
   Pool_role.is_unit_test ()
   ||
@@ -1960,19 +1961,54 @@ let unit_test ~__context : bool =
   | None ->
       false
 
-let get_cluster_pems ~__context =
+let get_cluster_pems' ~__context : (Cluster_interface.pems_opt, unit) result =
+  (* Error     <=> the caller is either the first node to be enabled, or
+   *               the first member of the cluster
+   *
+   * Ok None   <=> cluster without TLS verification
+   * Ok Some   <=> cluster with    TLS verification
+   * can raise
+   *)
   let open Cluster_interface in
   let module Client = Client.Client in
   if unit_test ~__context then
-    None
+    Ok None
   else
-    Db.Cluster_host.get_all ~__context
-    |> List.find_opt (fun self -> Db.Cluster_host.get_enabled ~__context ~self)
-    |> Option.map (fun self ->
-           call_api_functions ~__context @@ fun rpc session_id ->
-           Client.Cluster_host.get_cluster_config rpc session_id self
-           |> SecretString.rpc_of_t
-           |> Rpcmarshal.unmarshal cluster_config.Rpc.Types.ty
-           |> Result.get_ok
-       )
-    |> Fun.flip Option.bind (fun cc -> cc.pems)
+    let* enabled_host =
+      match
+        Db.Cluster_host.get_all ~__context
+        |> List.find_opt (fun self ->
+               Db.Cluster_host.get_enabled ~__context ~self
+           )
+      with
+      | None ->
+          Error ()
+      | Some x ->
+          Ok x
+      | exception e ->
+          D.error "get_cluster_pems: Cluster_host.get_all failed %s"
+            (Printexc.to_string e) ;
+          Error ()
+    in
+    call_api_functions ~__context @@ fun rpc session_id ->
+    (Client.Cluster_host.get_cluster_config rpc session_id enabled_host
+     |> SecretString.rpc_of_t
+     |> Rpcmarshal.unmarshal cluster_config.Rpc.Types.ty
+     |> function
+     | Ok x ->
+         x
+     | Error e ->
+         raise
+           Api_errors.(
+             Server_error (internal_error, ["bad response from cluster host"])
+           )
+    )
+    |> fun x -> Ok x.pems
+
+let get_cluster_pems ~__context self =
+  match get_cluster_pems' ~__context with
+  | Error () ->
+      let cn = Db.Cluster.get_uuid ~__context ~self in
+      Some (Cluster_interface.{cn; blobs= [Gencertlib.Selfcert.xapi_cluster ~cn]})
+  | Ok x ->
+      x

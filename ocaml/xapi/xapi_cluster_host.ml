@@ -98,7 +98,7 @@ let join_internal ~__context ~self =
       Xapi_clustering.Daemon.enable ~__context ;
       let result =
         Cluster_client.LocalClient.join (rpc ~__context) dbg cluster_token ip
-          ip_list (Helpers.get_cluster_pems ~__context)
+          ip_list (Helpers.get_cluster_pems ~__context cluster)
       in
       match Idl.IdM.run @@ Cluster_client.IDL.T.get result with
       | Ok () ->
@@ -229,12 +229,13 @@ let enable ~__context ~self =
   with_clustering_lock __LOC__ (fun () ->
       let dbg = Context.string_of_task __context in
       let host = Db.Cluster_host.get_host ~__context ~self in
+      let cluster = Db.Cluster_host.get_cluster ~__context ~self in
       assert_operation_host_target_is_localhost ~__context ~host ;
       let pifref = Db.Cluster_host.get_PIF ~__context ~self in
       let pifrec = Db.PIF.get_record ~__context ~self:pifref in
       assert_pif_prerequisites (pifref, pifrec) ;
       let ip = ip_of_pif (pifref, pifrec) in
-      let pems = Helpers.get_cluster_pems ~__context in
+      let pems = Helpers.get_cluster_pems ~__context cluster in
       let init_config =
         {
           Cluster_interface.local_ip= ip
@@ -342,7 +343,7 @@ let create_as_necessary ~__context ~host =
       ()
 
 let get_cluster_config ~__context ~self =
-  with_clustering_lock __LOC__ @@ fun () ->
+  (* don't take the clustering lock as this always a nested call *)
   let dbg = Context.string_of_task __context in
   let result = Cluster_client.LocalClient.get_config (rpc ~__context) dbg in
   match Idl.IdM.run @@ Cluster_client.IDL.T.get result with
